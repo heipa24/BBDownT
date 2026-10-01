@@ -772,6 +772,7 @@ partial class Program
 
                     if (myOption.DanmakuOnly)
                     {
+                        WriteBbdownMetadata(savePath, input, title, p.index);
                         DeleteEmptyDownloadDirectory(p.aid);
                         return DownloadPageOutcome.ExclusiveArtifact;
                     }
@@ -813,6 +814,7 @@ partial class Program
                 {
                     Log($"{savePath}已存在, 跳过下载...");
                     relatedTask?.AddSavePath(savePath);
+                    WriteBbdownMetadata(savePath, input, title, p.index);
                     File.Delete(coverPath);
                     DeleteEmptyDownloadDirectory(p.aid);
                     return DownloadPageOutcome.AlreadyExists;
@@ -933,6 +935,7 @@ partial class Program
                 {
                     Log($"{savePath}已存在, 跳过下载...");
                     relatedTask?.AddSavePath(savePath);
+                    WriteBbdownMetadata(savePath, input, title, p.index);
                     DeleteEmptyDownloadDirectory(p.aid);
                     return DownloadPageOutcome.AlreadyExists;
                 }
@@ -992,6 +995,7 @@ partial class Program
             }
 
             if (!string.IsNullOrWhiteSpace(savePath)) {
+                WriteBbdownMetadata(savePath, input, title, p.index);
                 relatedTask?.AddSavePath(savePath);
             }
             return DownloadPageOutcome.Completed;

@@ -1,6 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using static BBDownT.Core.Entity.Entity;
 using static BBDownT.BBDownTUtil;
@@ -15,6 +18,87 @@ namespace BBDownT;
 
 internal partial class Program
 {
+    /// <summary>
+    /// 保护 bbdown.json 的读-改-写, 避免多P(或并发任务)交叉覆盖同一份元数据
+    /// </summary>
+    private static readonly object BbdownMetadataLock = new();
+
+    /// <summary>
+    /// 写出/合并 bbdown.json 元数据(来源链接 + 分P文件映射)到输出文件所在目录, 供后续更新脚本定位来源。
+    /// 尽力而为: 任何异常静默吞掉, 绝不影响下载主流程。
+    /// </summary>
+    private static void WriteBbdownMetadata(string savePath, string sourceId, string title, int page)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(savePath)) return;
+            var dir = Path.GetDirectoryName(Path.GetFullPath(savePath));
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
+            var metaPath = Path.Combine(dir, "bbdown.json");
+
+            lock (BbdownMetadataLock)
+            {
+                var baseName = Path.GetFileNameWithoutExtension(savePath);
+                var xmlPath = Path.ChangeExtension(savePath, ".xml");
+                var assPath = Path.ChangeExtension(savePath, ".ass");
+
+                JsonObject root;
+                if (File.Exists(metaPath))
+                {
+                    try { root = JsonNode.Parse(File.ReadAllText(metaPath))!.AsObject(); }
+                    catch { root = new JsonObject(); }
+                }
+                else
+                {
+                    root = new JsonObject();
+                }
+
+                root["sourceId"] = sourceId ?? "";
+                if (!string.IsNullOrWhiteSpace(sourceId))
+                {
+                    var sid = sourceId.Trim();
+                    if (sid.StartsWith("http", StringComparison.OrdinalIgnoreCase)) root["url"] = sid;
+                    else if (sid.StartsWith("ss", StringComparison.OrdinalIgnoreCase) || sid.StartsWith("ep", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/bangumi/play/{sid}";
+                    else if (sid.StartsWith("BV", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/video/{sid}/";
+                    else if (sid.StartsWith("av", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/video/{sid}";
+                }
+                if (!string.IsNullOrWhiteSpace(title)) root["title"] = title;
+                root["updatedAt"] = DateTimeOffset.Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz");
+
+                var pages = root["pages"] as JsonArray ?? new JsonArray();
+                var entry = new JsonObject { ["page"] = page, ["file"] = Path.GetFileName(savePath) };
+                if (File.Exists(xmlPath)) entry["xml"] = baseName + ".xml";
+                if (File.Exists(assPath)) entry["ass"] = baseName + ".ass";
+
+                var replacedIdx = -1;
+                for (int i = 0; i < pages.Count; i++)
+                {
+                    if (pages[i] is JsonObject o && o["page"] is JsonValue pv1 && pv1.TryGetValue<int>(out var curPage) && curPage == page)
+                    {
+                        replacedIdx = i;
+                        break;
+                    }
+                }
+                if (replacedIdx >= 0) pages[replacedIdx] = entry; else pages.Add(entry);
+                var sorted = pages.OfType<JsonObject>().OrderBy(o => o["page"] is JsonValue pv2 && pv2.TryGetValue<int>(out var pn) ? pn : int.MaxValue).ToList();
+                var newPages = new JsonArray();
+                foreach (var o in sorted) newPages.Add(o.DeepClone());
+                root["pages"] = newPages;
+
+                var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+                MediaOutput.Write(metaPath, staged =>
+                {
+                    File.WriteAllText(staged, json);
+                    return 0;
+                });
+            }
+        }
+        catch
+        {
+            // 元数据写入失败不影响下载
+        }
+    }
+
     /// <summary>
     /// 兼容旧版本命令行参数并给出警告
     /// </summary>
