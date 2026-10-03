@@ -262,17 +262,32 @@ internal partial class Program
             }
         }
 
-        //寻找aria2c
-        if (myOption.UseAria2c)
+        //寻找aria2c: PATH 中存在时默认启用, 可用 --no-aria2 显式关闭
+        if (myOption.NoAria2c)
         {
-            if (string.IsNullOrEmpty(BBDownTAria2c.ARIA2C) || !File.Exists(BBDownTAria2c.ARIA2C))
-            {
-                var binPath = FindExecutable("aria2c");
-                if (string.IsNullOrEmpty(binPath))
-                    throw new Exception("找不到可执行的aria2c文件");
-                BBDownTAria2c.ARIA2C = binPath;
-            }
+            myOption.UseAria2c = false;
+            BBDownTAria2c.ARIA2C = string.Empty;
+        }
+        else
+        {
+            var aria2cPath = (!string.IsNullOrEmpty(BBDownTAria2c.ARIA2C) && File.Exists(BBDownTAria2c.ARIA2C))
+                ? BBDownTAria2c.ARIA2C
+                : FindExecutable("aria2c");
 
+            if (string.IsNullOrEmpty(aria2cPath))
+            {
+                //用户显式要求使用 aria2c 但未找到 -> 保持原有报错行为
+                if (myOption.UseAria2c)
+                    throw new Exception("找不到可执行的aria2c文件");
+            }
+            else
+            {
+                var autoEnabled = !myOption.UseAria2c;
+                BBDownTAria2c.ARIA2C = aria2cPath;
+                myOption.UseAria2c = true;
+                if (autoEnabled)
+                    LogColor("检测到 aria2c, 已自动启用 aria2 下载 (使用 --no-aria2 可关闭)");
+            }
         }
     }
 

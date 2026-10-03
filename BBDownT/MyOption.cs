@@ -13,6 +13,7 @@ internal class MyOption
     public bool OnlyShowInfo { get; set; }
     public bool ShowAll { get; set; }
     public bool UseAria2c { get; set; }
+    public bool NoAria2c { get; set; }
     public bool Interactive { get; set; }
     public bool HideStreams { get; set; }
     public bool MultiThread { get; set; } = true;

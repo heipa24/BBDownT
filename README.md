@@ -54,7 +54,8 @@ Options:
   -q, --dfn-priority <dfn-priority>              画质优先级,用逗号分隔 例: "8K 超高清, 1080P 高码率, HDR 真彩, 杜比视界"；与 -e 同时使用时越靠前越优先
   -info, --only-show-info                        仅解析音视频和字幕信息，不下载；配合 --sub-only 仅列出字幕
   --show-all                                     展示所有分P标题
-  -aria2, --use-aria2c                           调用aria2c进行下载(你需要自行准备好二进制可执行文件)
+  -aria2, --use-aria2c                           调用aria2c进行下载(检测到PATH中存在aria2c时默认启用, 可用--no-aria2关闭)
+  --no-aria2                                     强制使用内置下载器, 即使PATH中存在aria2c也不启用aria2
   -ia, --interactive                             交互式选择音视频和字幕；字幕支持多选
   -hs, --hide-streams                            不要显示所有可用音视频流
   -mt, --multi-thread                            使用多线程下载(默认开启)
@@ -108,7 +109,7 @@ Options:
   -ua, --user-agent <user-agent>                 指定user-agent, 否则使用随机user-agent
   -c, --cookie <cookie>                          设置字符串cookie用以下载网页接口的会员内容
   -token, --access-token <access-token>          设置access_token用以下载TV/APP接口的会员内容
-  --aria2c-args <aria2c-args>                    调用aria2c的附加参数(默认参数包含"-x16 -s16 -j16 -k 5M", 使用时注意字符串转义)
+  --aria2c-args <aria2c-args>                    调用aria2c的附加参数(默认包含"-x16 -s16 -j16 --min-split-size=1M"等, 使用时注意字符串转义)
   --work-dir <work-dir>                          设置程序的工作目录
   --ffmpeg-path <ffmpeg-path>                    设置ffmpeg的路径
   --mp4box-path <mp4box-path>                    设置mp4box的路径

@@ -29,6 +29,6 @@ static class BBDownTAria2c
         headerArgs += " --header=\"User-Agent: Mozilla/5.0\"";
         if (HTTPUtil.ShouldSendCookie(url))
             headerArgs += $" --header=\"Cookie: {HTTPUtil.GetCookieHeaderValue(url)}\"";
-        return await RunCommandCodeAsync(ARIA2C, $" --auto-file-renaming=false --download-result=hide --allow-overwrite=true --console-log-level=warn -x16 -s16 -j16 -k5M {headerArgs} {extraArgs} \"{url}\" -d \"{Path.GetDirectoryName(path)}\" -o \"{Path.GetFileName(path)}\"");
+        return await RunCommandCodeAsync(ARIA2C, $" --auto-file-renaming=false --download-result=hide --allow-overwrite=true --console-log-level=warn --summary-interval=0 --file-allocation=none --continue=true --max-tries=5 --retry-wait=3 --min-split-size=1M --disk-cache=64M --optimize-concurrent-downloads=true -x16 -s16 -j16 {headerArgs} {extraArgs} \"{url}\" -d \"{Path.GetDirectoryName(path)}\" -o \"{Path.GetFileName(path)}\"");
     }
 }
