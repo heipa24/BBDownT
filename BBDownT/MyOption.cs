@@ -27,6 +27,7 @@ internal class MyOption
     public bool SkipMux { get; set; }
     public bool SkipSubtitle { get; set; }
     public bool SkipCover { get; set; }
+    public bool MetadataOnly { get; set; }
     public bool ForceHttp { get; set; } = true;
     public bool DownloadDanmaku { get; set; } = false;
     public string? DownloadDanmakuFormats { get; set; }

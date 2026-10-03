@@ -202,16 +202,7 @@ static partial class BBDownTMuxer
         List<string> args = ["-loglevel", Config.DEBUG_LOG ? "verbose" : "warning", "-y"];
         args.AddRange(inputArgs);
         args.AddRange(metaArgs);
-        args.AddRange(["-map_metadata", "-1"]);
-        if (!simplyMux) {
-            args.AddRange(["-metadata", $"title={(episodeId == "" ? title : episodeId)}"]);
-            args.AddRange(["-metadata", $"comment={desc}"]);
-            if (lang != "") args.AddRange(["-metadata:s:a:0", $"language={lang}"]);
-            args.AddRange(["-metadata", $"description={desc}"]);
-            if (!string.IsNullOrEmpty(author)) args.AddRange(["-metadata", $"artist={author}"]);
-            if (episodeId != "") args.AddRange(["-metadata", $"album={title}"]);
-            if (pubTime != 0) args.AddRange(["-metadata", $"creation_time={DateTimeOffset.FromUnixTimeSeconds(pubTime).ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ")}"]);
-        }
+        args.AddRange(BuildContainerMetadataArgs(desc, title, author, episodeId, lang, pubTime, simplyMux));
         args.AddRange(["-c:v", "copy", "-c:a", "copy"]);
         if (audioOnly && audioPath == "") args.Add("-vn");
         if (subs != null) args.AddRange(["-c:s", "mov_text"]);
@@ -221,6 +212,87 @@ static partial class BBDownTMuxer
 
         LogDebug("ffmpeg命令: {0}", FormatCommandForLog(args));
         return RunExe(FFMPEG, args, FFMPEG != "ffmpeg");
+    }
+
+    /// <summary>
+    /// 构造容器级文本标签参数, 供首次混流与已存在文件的元数据刷新共用
+    /// </summary>
+    private static List<string> BuildContainerMetadataArgs(string desc, string title, string author, string episodeId, string lang, long pubTime, bool simplyMux)
+    {
+        List<string> args = ["-map_metadata", "-1"];
+        if (simplyMux) return args;
+        args.AddRange(["-metadata", $"title={(episodeId == "" ? title : episodeId)}"]);
+        args.AddRange(["-metadata", $"comment={desc}"]);
+        if (lang != "") args.AddRange(["-metadata:s:a:0", $"language={lang}"]);
+        args.AddRange(["-metadata", $"description={desc}"]);
+        if (!string.IsNullOrEmpty(author)) args.AddRange(["-metadata", $"artist={author}"]);
+        if (episodeId != "") args.AddRange(["-metadata", $"album={title}"]);
+        if (pubTime != 0) args.AddRange(["-metadata", $"creation_time={DateTimeOffset.FromUnixTimeSeconds(pubTime).ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ")}"]);
+        return args;
+    }
+
+    /// <summary>
+    /// 以已存在的输出文件为唯一媒体输入, 用 -c copy 重新封装并写回最新元数据;
+    /// 音视频流只做搬运, 不重新下载也不重新编码。
+    /// </summary>
+    /// <param name="inputPath">已存在的输出文件</param>
+    /// <param name="stagedPath">暂存输出文件, 成功后由调用方原子替换</param>
+    public static int UpdateMetadata(string inputPath, string stagedPath, string desc = "", string title = "", string author = "",
+        string episodeId = "", string pic = "", string lang = "", List<Subtitle>? subs = null, bool audioOnly = false,
+        List<ViewPoint>? points = null, long pubTime = 0, bool simplyMux = false, Func<IEnumerable<string>, int>? runFfmpeg = null)
+    {
+        var usableSubs = subs?.Where(s => File.Exists(s.path) && File.ReadAllText(s.path) != "").ToList() ?? [];
+        var hasPic = !string.IsNullOrEmpty(pic) && File.Exists(pic);
+        byte inputCount = 1;
+        List<string> inputArgs = ["-i", inputPath];
+        List<string> metaArgs = [];
+
+        // 只搬运已有媒体流: 提供新封面时丢掉旧的 attached_pic, 提供新字幕时丢掉旧字幕流,
+        // 否则原样保留, 保证重复刷新幂等且不会因 --skip-cover/--skip-subtitle 丢内容。
+        if (!(audioOnly && hasPic)) inputArgs.AddRange(["-map", hasPic ? "0:v:0?" : "0:v?"]);
+        inputArgs.AddRange(["-map", "0:a?"]);
+        if (usableSubs.Count == 0) inputArgs.AddRange(["-map", "0:s?"]);
+
+        if (hasPic)
+        {
+            inputArgs.AddRange(["-i", pic, "-map", inputCount.ToString()]);
+            inputCount++;
+            metaArgs.AddRange([$"-disposition:v:{(audioOnly ? "0" : "1")}", "attached_pic"]);
+        }
+
+        for (int i = 0; i < usableSubs.Count; i++)
+        {
+            inputArgs.AddRange(["-i", usableSubs[i].path, "-map", inputCount.ToString()]);
+            inputCount++;
+            metaArgs.AddRange([$"-metadata:s:s:{i}", $"title={GetSubtitleCode(usableSubs[i].lan).Item2}", $"-metadata:s:s:{i}", $"language={GetSubtitleCode(usableSubs[i].lan).Item1}"]);
+        }
+
+        string? chaptersFile = null;
+        if (points != null && points.Count != 0)
+        {
+            // 刷新路径没有临时音视频目录, 章节元数据写到系统临时目录并在结束后删除
+            chaptersFile = Path.Combine(Path.GetTempPath(), $"bbdownt-chapters-{Guid.NewGuid():N}");
+            File.WriteAllText(chaptersFile, GetFFmpegMetaString(points));
+            inputArgs.AddRange(["-i", chaptersFile, "-map_chapters", inputCount.ToString()]);
+            inputCount++;
+        }
+
+        try
+        {
+            List<string> args = ["-loglevel", Config.DEBUG_LOG ? "verbose" : "warning", "-y"];
+            args.AddRange(inputArgs);
+            args.AddRange(metaArgs);
+            args.AddRange(BuildContainerMetadataArgs(desc, title, author, episodeId, lang, pubTime, simplyMux));
+            args.AddRange(["-c:v", "copy", "-c:a", "copy"]);
+            args.AddRange(["-c:s", usableSubs.Count == 0 ? "copy" : "mov_text"]);
+            args.AddRange(["-movflags", "faststart", "-strict", "unofficial", "-strict", "-2", "-f", "mp4", "--", stagedPath]);
+            LogDebug("ffmpeg命令: {0}", FormatCommandForLog(args));
+            return runFfmpeg is null ? RunExe(FFMPEG, args, FFMPEG != "ffmpeg") : runFfmpeg(args);
+        }
+        finally
+        {
+            if (chaptersFile != null && File.Exists(chaptersFile)) File.Delete(chaptersFile);
+        }
     }
 
     public static void MergeFLV(string[] files, string outPath, Func<string, string, int>? convert = null)

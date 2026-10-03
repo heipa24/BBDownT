@@ -262,6 +262,17 @@ internal partial class Program
                 BBDownTMuxer.FFMPEG = binPath;
             }
         }
+        // --metadata-only 固定用 ffmpeg 刷新元数据(mp4box 无法改写已有文件),
+        // 因此即便启用了 --use-mp4box 也要保证 ffmpeg 可用。
+        // --skip-mux 下不会触发刷新, 不强制要求 ffmpeg。
+        if (myOption.MetadataOnly && !myOption.SkipMux
+            && (string.IsNullOrEmpty(BBDownTMuxer.FFMPEG) || !File.Exists(BBDownTMuxer.FFMPEG)))
+        {
+            var binPath = FindExecutable("ffmpeg");
+            if (string.IsNullOrEmpty(binPath))
+                throw new Exception("找不到可执行的ffmpeg文件, --metadata-only 需要 ffmpeg");
+            BBDownTMuxer.FFMPEG = binPath;
+        }
 
         //寻找aria2c: PATH 中存在时默认启用, 可用 --no-aria2 显式关闭
         if (myOption.NoAria2c)
@@ -321,6 +332,15 @@ internal partial class Program
         if (myOption.SkipSubtitle)
         {
             myOption.SubOnly = false;
+        }
+        // 已存在文件的元数据刷新只在正常混流路径上触发
+        if (myOption.MetadataOnly && myOption.SkipMux)
+        {
+            LogWarn("--metadata-only 与 --skip-mux 同时使用时不会生效, 已存在的文件不会被刷新");
+        }
+        if (myOption.MetadataOnly && myOption.UseMP4box)
+        {
+            LogDebug("--metadata-only 始终使用 ffmpeg 更新元数据, 不受 --use-mp4box 影响");
         }
     }
 

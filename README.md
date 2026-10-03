@@ -151,6 +151,7 @@ Options:
   --skip-mux                                     跳过混流步骤
   --skip-subtitle                                跳过字幕下载
   --skip-cover                                   跳过封面下载
+  --metadata-only                                输出文件已存在时仅更新其元数据(标题/描述/封面/章节/字幕)，不重新下载或重编码音视频流
   --force-http                                   下载音视频时强制使用HTTP协议替换HTTPS(默认开启)
   -dd, --download-danmaku                        下载弹幕
   -ddf, --download-danmaku-formats <formats>     指定需下载的弹幕格式, 用逗号分隔, 可选 xml/ass, 默认: "xml,ass"

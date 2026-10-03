@@ -738,6 +738,9 @@ partial class Program
                 LogDebug("Format Before: " + savePathFormat);
                 savePath = FormatSavePath(savePathFormat, title, selectedVideo, selectedAudio, p, pagesCount, apiType, pubTime);
                 savePath = AudioLanguageSelection.OutputPath(savePath, requestedAudioLanguage, myOption.AudioOnly && !myOption.VideoOnly);
+                // 纯音频输出的后缀提前定型, 否则"已存在"判定会去找并不存在的 .mp4
+                if (myOption.AudioOnly && !myOption.VideoOnly)
+                    savePath = savePath[..^4] + ".m4a";
                 LogDebug("Format After: " + savePath);
 
                 if (downloadDanmaku)
@@ -810,14 +813,13 @@ partial class Program
                 //处理PCDN
                 HandlePcdn(myOption, selectedVideo, selectedAudio);
 
+                var episodeId = (pagesCount > 1 || (bangumi && !vInfo.IsBangumiEnd)) ? p.title : "";
+
                 if (ShouldUseMuxedOutputCache(myOption, savePath))
                 {
-                    Log($"{savePath}已存在, 跳过下载...");
-                    relatedTask?.AddSavePath(savePath);
-                    WriteBbdownMetadata(savePath, input, title, p.index);
-                    File.Delete(coverPath);
-                    DeleteEmptyDownloadDirectory(p.aid);
-                    return DownloadPageOutcome.AlreadyExists;
+                    return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "", episodeId,
+                        File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
+                        input, p.index, p.aid, relatedTask);
                 }
 
                 if (selectedVideo != null)
@@ -867,15 +869,13 @@ partial class Program
                     return DownloadPageOutcome.Partial;
                 }
                 Log($"开始合并音视频{(subtitleInfo.Any() ? "和字幕" : "")}...");
-                if (myOption.AudioOnly)
-                    savePath = savePath[..^4] + ".m4a";
 
                 var isHevc = selectedVideo?.codecs == "HEVC";
                 var muxed = MediaOutput.Write(savePath, staged => BBDownTMuxer.MuxAV(myOption.UseMP4box, p.bvid, videoPath, audioPath, audioMaterial, staged,
                     desc,
                     title,
                     p.ownerName ?? "",
-                    (pagesCount > 1 || (bangumi && !vInfo.IsBangumiEnd)) ? p.title : "",
+                    episodeId,
                     File.Exists(coverPath) ? coverPath : "",
                     lang,
                     subtitleInfo, myOption.AudioOnly, myOption.VideoOnly, p.points, p.pubTime, myOption.SimplyMux, isHevc));
@@ -931,13 +931,14 @@ partial class Program
                 }
                 if (myOption.OnlyShowInfo) return DownloadPageOutcome.InfoOnly;
                 savePath = FormatSavePath(savePathFormat, title, parsedResult.VideoTracks.FirstOrDefault(), null, p, pagesCount, apiType, pubTime);
-                if (File.Exists(savePath) && new FileInfo(savePath).Length != 0)
+                if (myOption.AudioOnly && !myOption.VideoOnly)
+                    savePath = savePath[..^4] + ".m4a";
+                if (IsUsableArtifact(savePath))
                 {
-                    Log($"{savePath}已存在, 跳过下载...");
-                    relatedTask?.AddSavePath(savePath);
-                    WriteBbdownMetadata(savePath, input, title, p.index);
-                    DeleteEmptyDownloadDirectory(p.aid);
-                    return DownloadPageOutcome.AlreadyExists;
+                    return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "",
+                        (pagesCount > 1 || (bangumi && !vInfo.IsBangumiEnd)) ? p.title : "",
+                        File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
+                        input, p.index, p.aid, relatedTask);
                 }
                 var pad = string.Empty.PadRight(clips.Count.ToString().Length, '0');
                 var files = new List<string>();
@@ -959,8 +960,6 @@ partial class Program
                     return DownloadPageOutcome.Partial;
                 }
                 Log($"开始混流视频{(subtitleInfo.Any() ? "和字幕" : "")}...");
-                if (myOption.AudioOnly)
-                    savePath = savePath[..^4] + ".m4a";
                 var muxed = MediaOutput.Write(savePath, staged => BBDownTMuxer.MuxAV(false, p.bvid, videoPath, "", audioMaterial, staged,
                     desc,
                     title,
@@ -1062,6 +1061,66 @@ partial class Program
         return !myOption.OnlyShowInfo
             && !myOption.SkipMux
             && IsUsableArtifact(savePath);
+    }
+
+    /// <summary>
+    /// 输出文件已存在且用户要求只刷新元数据
+    /// </summary>
+    internal static bool ShouldRefreshExistingMetadata(MyOption myOption, string savePath)
+    {
+        return myOption.MetadataOnly && ShouldUseMuxedOutputCache(myOption, savePath);
+    }
+
+    /// <summary>
+    /// 处理已存在的输出文件: 默认仅跳过下载; 开启 --metadata-only 时用 ffmpeg -c copy 重写元数据。
+    /// 刷新写入暂存文件, 失败时原文件保持不动并返回 Failed。
+    /// </summary>
+    private static DownloadPageOutcome HandleExistingOutput(
+        MyOption myOption, string savePath, string desc, string title, string author, string episodeId,
+        string coverPath, string lang, List<Subtitle> subtitleInfo, List<ViewPoint>? points, long pubTime,
+        string input, int pageIndex, string aid, DownloadTask? relatedTask)
+    {
+        var outcome = DownloadPageOutcome.AlreadyExists;
+        if (ShouldRefreshExistingMetadata(myOption, savePath))
+        {
+            Log($"{savePath}已存在, 正在更新元数据...");
+            if (RefreshExistingMetadata(myOption, savePath, desc, title, author, episodeId, coverPath, lang, subtitleInfo, points, pubTime))
+            {
+                Log($"{savePath}元数据更新完成");
+            }
+            else
+            {
+                LogError($"{savePath}元数据更新失败, 原文件未改动");
+                outcome = DownloadPageOutcome.Failed;
+            }
+        }
+        else
+        {
+            Log($"{savePath}已存在, 跳过下载...");
+        }
+
+        if (outcome.IsSuccessful())
+        {
+            relatedTask?.AddSavePath(savePath);
+            WriteBbdownMetadata(savePath, input, title, pageIndex);
+        }
+        // coverPath 在未下载封面时为空串, 直接 Delete 会抛异常
+        if (!string.IsNullOrEmpty(coverPath)) File.Delete(coverPath);
+        foreach (var s in subtitleInfo.Where(s => !string.IsNullOrEmpty(s.path))) File.Delete(s.path);
+        DeleteEmptyDownloadDirectory(aid);
+        return outcome;
+    }
+
+    /// <summary>
+    /// 以已存在的输出文件为输入重新封装, 只写回元数据; 音视频流保持原样
+    /// </summary>
+    private static bool RefreshExistingMetadata(
+        MyOption myOption, string savePath, string desc, string title, string author, string episodeId,
+        string coverPath, string lang, List<Subtitle> subtitleInfo, List<ViewPoint>? points, long pubTime)
+    {
+        return MediaOutput.Write(savePath, staged => BBDownTMuxer.UpdateMetadata(savePath, staged,
+            desc, title, author, episodeId, coverPath, lang, subtitleInfo,
+            myOption.AudioOnly, points, pubTime, myOption.SimplyMux));
     }
 
     internal static bool CanUseProgressiveStream(MyOption myOption)
