@@ -79,10 +79,11 @@ internal partial class Program
                         break;
                     }
                 }
-                if (replacedIdx >= 0) pages[replacedIdx] = entry; else pages.Add(entry);
+                // 显式转成 JsonNode, 走非泛型 Add, 避免 JsonArray.Add<T> 触发 AOT/裁剪分析告警
+                if (replacedIdx >= 0) pages[replacedIdx] = entry; else pages.Add((JsonNode)entry);
                 var sorted = pages.OfType<JsonObject>().OrderBy(o => o["page"] is JsonValue pv2 && pv2.TryGetValue<int>(out var pn) ? pn : int.MaxValue).ToList();
                 var newPages = new JsonArray();
-                foreach (var o in sorted) newPages.Add(o.DeepClone());
+                foreach (var o in sorted) newPages.Add((JsonNode)o.DeepClone());
                 root["pages"] = newPages;
 
                 var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
