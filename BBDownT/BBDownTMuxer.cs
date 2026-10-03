@@ -219,7 +219,7 @@ static partial class BBDownTMuxer
     /// </summary>
     private static List<string> BuildContainerMetadataArgs(string desc, string title, string author, string episodeId, string lang, long pubTime, bool simplyMux)
     {
-        List<string> args = ["-map_metadata", "-1"];
+        List<string> args = ["-map_metadata:g", "-1"];
         if (simplyMux) return args;
         args.AddRange(["-metadata", $"title={(episodeId == "" ? title : episodeId)}"]);
         args.AddRange(["-metadata", $"comment={desc}"]);

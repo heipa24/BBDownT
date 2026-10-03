@@ -481,7 +481,7 @@ static partial class BBDownTUtil
     /// <summary>
     /// 解析 view_points 章节, 兼容数组/单个对象, 标题取 content(回退 title)
     /// </summary>
-    private static List<ViewPoint> ParseViewPoints(string json)
+    internal static List<ViewPoint> ParseViewPoints(string json)
     {
         var points = new List<ViewPoint>();
         try
@@ -499,8 +499,12 @@ static partial class BBDownTUtil
             };
             foreach (var point in items)
             {
-                var title = point.TryGetProperty("content", out var content) ? content.GetString()
-                          : point.TryGetProperty("title", out var pointTitle) ? pointTitle.GetString() : null;
+                var title = point.TryGetProperty("content", out var content) ? content.GetString() : null;
+                if (string.IsNullOrWhiteSpace(title)
+                    && point.TryGetProperty("title", out var pointTitle))
+                {
+                    title = pointTitle.GetString();
+                }
                 if (string.IsNullOrWhiteSpace(title)) continue;
                 points.Add(new ViewPoint()
                 {

@@ -315,6 +315,26 @@ public class PlayResponseMapperTests
             point => AssertPoint(point, "Outro", 90, 100));
     }
 
+    [Fact]
+    public void ViewPoints_UsesTitleWhenContentIsEmpty()
+    {
+        const string json = """
+            {
+              "data": {
+                "view_points": {
+                  "content": "",
+                  "title": "章节标题",
+                  "from": 12,
+                  "to": 34
+                }
+              }
+            }
+            """;
+
+        var point = Assert.Single(BBDownTUtil.ParseViewPoints(json));
+
+        AssertPoint(point, "章节标题", 12, 34);
+    }
 
     [Fact]
     public void DurlFixture_MapsClipsQualitiesDurationSizeAndCodec()

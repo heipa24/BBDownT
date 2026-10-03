@@ -40,7 +40,7 @@ public class MetadataRefreshTests
         Assert.True(HasPair(args, "-i", media));
         Assert.True(HasPair(args, "-c:v", "copy"));
         Assert.True(HasPair(args, "-c:a", "copy"));
-        Assert.True(HasPair(args, "-map_metadata", "-1"));
+        Assert.True(HasPair(args, "-map_metadata:g", "-1"));
         Assert.True(HasPair(args, "-metadata", "title=标题"));
         Assert.True(HasPair(args, "-metadata", "comment=简介"));
         Assert.True(HasPair(args, "-metadata", "description=简介"));
@@ -55,7 +55,7 @@ public class MetadataRefreshTests
 
         var args = Invoke(media, files.FilePath("staged.mp4"), simplyMux: true);
 
-        Assert.Contains("-map_metadata", args);
+        Assert.Contains("-map_metadata:g", args);
         Assert.DoesNotContain("title=标题", args);
         Assert.True(HasPair(args, "-c:v", "copy"));
     }
