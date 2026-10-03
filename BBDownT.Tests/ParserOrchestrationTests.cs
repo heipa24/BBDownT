@@ -236,7 +236,7 @@ public class ParserOrchestrationTests
 
         Assert.Equal(new[] { "0", Config.qualitys.Keys.First() }, requestedQns);
         Assert.Equal("https://cdn.test/audio-final.m4s", Assert.Single(result.AudioTracks).baseUrl);
-        Assert.Contains(result.ExtraPoints, point => point.title == "片头");
+        Assert.Contains(result.ExtraPoints, point => point.title == "Intro");
     }
 
     [Fact]

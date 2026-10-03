@@ -270,9 +270,49 @@ public class PlayResponseMapperTests
         Assert.Collection(
             result.ExtraPoints,
             point => AssertPoint(point, "正片", 0, 10),
-            point => AssertPoint(point, "片头", 10, 20),
+            point => AssertPoint(point, "Intro", 10, 20),
             point => AssertPoint(point, "正片", 20, 30),
-            point => AssertPoint(point, "片尾", 30, 40));
+            point => AssertPoint(point, "Outro", 30, 40));
+    }
+
+    [Fact]
+    public void BangumiClipInfo_MapsClipTypeAndSingleObjectShape()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "clip_info_list": { "clipType": "CLIP_TYPE_OP", "start": 5, "end": 15 }
+            }
+            """);
+        var result = new ParsedResult();
+
+        PlayResponseMapper.MapClipInfo(document.RootElement, result);
+
+        Assert.Collection(
+            result.ExtraPoints,
+            point => AssertPoint(point, "正片", 0, 5),
+            point => AssertPoint(point, "Intro", 5, 15));
+    }
+
+    [Fact]
+    public void BangumiClipInfo_FallsBackToToastTextWhenClipTypeIsMissing()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "clip_info_list": [
+                { "toastText": "即将跳过广告", "start": 0, "end": 8 },
+                { "clipType": "CLIP_TYPE_ED", "toastText": "", "start": 90, "end": 100 }
+              ]
+            }
+            """);
+        var result = new ParsedResult();
+
+        PlayResponseMapper.MapClipInfo(document.RootElement, result);
+
+        Assert.Collection(
+            result.ExtraPoints,
+            point => AssertPoint(point, "广告", 0, 8),
+            point => AssertPoint(point, "正片", 8, 90),
+            point => AssertPoint(point, "Outro", 90, 100));
     }
 
 
