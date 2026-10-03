@@ -14,7 +14,12 @@
 * 杜比视界：ffmpeg5.0以上或新版mp4box.
 
 # 快速开始
-本软件已经以 [Dotnet Tool](https://www.nuget.org/packages/BBDownT/) 形式发布。
+
+> 本仓库是上游 [LOVAHE/BBDownT](https://github.com/LOVAHE/BBDownT) 的 fork，`main` 分支以上游 `v2` 分支为基线。**本仓库不发布预编译二进制**，下面的 Dotnet Tool、独立二进制与自动构建产物都来自上游，不含本仓库的改动。需要使用本仓库的代码时请自行构建。
+
+## 直接使用上游发布版
+
+上游已把本软件以 [Dotnet Tool](https://www.nuget.org/packages/BBDownT/) 形式发布到 nuget.org，包 ID 与命令名均为 `BBDownT`。
 
 如果你本地有dotnet环境，使用如下命令即可安装使用
 ```
@@ -28,10 +33,88 @@ dotnet tool update --global BBDownT
 
 独立二进制可运行 `BBDownT --update`（改名后如 `bbd --update`）更新到最新正式版。
 
-# 下载
+## 下载
+
 Release版本：https://github.com/LOVAHE/BBDownT/releases
 
 自动构建产物：https://github.com/LOVAHE/BBDownT/actions/workflows/build_latest.yml
+
+## 自行构建
+
+环境要求：.NET SDK 9（本仓库 CI 使用 9.0.317）。
+
+### 直接运行
+
+```
+dotnet build BBDownT.sln
+dotnet run --project BBDownT -- "https://www.bilibili.com/video/BV1qt4y1X7TW"
+```
+
+### 打包为 nupkg 并安装为 dotnet tool
+
+本仓库的工程已配置 `PackAsTool`，打出的 nupkg 就是 dotnet tool 包，命令名为 `BBDownT`：
+
+```
+dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts
+```
+
+产物为 `artifacts/BBDownT.<版本号>.nupkg`（当前为 `BBDownT.2.1.4.nupkg`，包 ID 与 nuget.org 上的同名包一致）。
+
+安装为全局命令：
+
+```
+dotnet tool install --global --add-source ./artifacts BBDownT
+```
+
+只想在单个目录内使用时，可以装成局部工具：
+
+```
+dotnet tool install --tool-path ./tools --add-source ./artifacts BBDownT
+./tools/BBDownT.exe "https://www.bilibili.com/video/BV1qt4y1X7TW"
+```
+
+重新打包后更新，或卸载：
+
+```
+dotnet tool update --global --add-source ./artifacts BBDownT
+dotnet tool uninstall --global BBDownT
+```
+
+*PS: 本地包的 ID 与命令名和 nuget.org 上的 `BBDownT` 完全一致，不能与上游包同时安装。若之前装过上游版本，请先 `dotnet tool uninstall --global BBDownT`。安装时若提示找不到包，通常是 NuGet 官方源被镜像拦截或网络不可达，可以补一个只含本地源的 `nuget.config` 后改用 `--configfile` 安装：*
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="local" value="artifacts" />
+  </packageSources>
+</configuration>
+```
+
+```
+dotnet tool install --global --configfile ./nuget.config BBDownT
+```
+
+### 发布独立二进制
+
+指定 `-r` 时会启用 Native AOT：
+```
+dotnet publish BBDownT -r win-x64 -c Release -o artifact
+```
+产物为 `artifact/BBDownT.exe`（其他平台是无扩展名的 `artifact/BBDownT`），改名后命令名随之变化。可用 RID 与上游 CI 保持一致：`win-x64`、`win-arm64`、`osx-x64`、`osx-arm64`、`linux-x64`、`linux-arm64`。
+
+Native AOT 需要系统的 C 链接器：Windows 需 Visual Studio C++ 生成工具，Linux 需 clang/lld 及对应的 sysroot。
+
+Linux 产物还要注意 glibc 兼容性：上游 CI 在 Ubuntu 18.04 容器内构建以兼容较老的发行版，`linux-arm64` 还依赖专用的交叉编译容器，本地一般无法直接完成，建议直接使用上游 Release 产物。
+
+### 运行测试
+
+```
+dotnet test BBDownT.sln
+```
+
+*PS: 自行构建的程序请不要使用 `BBDownT --update`。该命令固定从上游 LOVAHE/BBDownT 的正式 Release 拉取，会把当前程序替换为上游版本。*
 
 # 开始使用
 目前命令行参数支持情况
