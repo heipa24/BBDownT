@@ -526,18 +526,34 @@ static partial class BBDownTUtil
     public static string GetFFmpegMetaString(List<ViewPoint> points)
     {
         StringBuilder sb = new();
-        sb.AppendLine(";FFMETADATA");
+        sb.AppendLine(";FFMETADATA1");
         foreach (var p in points)
         {
             var time = 1000; //固定 1000
             sb.AppendLine("[CHAPTER]");
             sb.AppendLine($"TIMEBASE=1/{time}");
-            sb.AppendLine($"START={p.start * time}");
-            sb.AppendLine($"END={p.end * time}");
-            sb.AppendLine($"title={p.title}");
+            // 章节起点/终点以毫秒表示, 强转 long 避免超长视频溢出
+            sb.AppendLine($"START={(long)p.start * time}");
+            sb.AppendLine($"END={(long)p.end * time}");
+            sb.AppendLine($"title={EscapeFFmpegMetadata(p.title)}");
             sb.AppendLine();
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// 转义 FFmetadata 值: = ; # \ 与换行具有语法含义, 未转义会破坏章节解析
+    /// </summary>
+    private static string EscapeFFmpegMetadata(string? value)
+    {
+        var escaped = new StringBuilder();
+        foreach (var character in (value ?? "").Replace("\r\n", "\n").Replace('\r', '\n'))
+        {
+            if (character is '=' or ';' or '#' or '\\' or '\n')
+                escaped.Append('\\');
+            escaped.Append(character);
+        }
+        return escaped.ToString();
     }
 
     /// <summary>
