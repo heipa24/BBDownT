@@ -60,27 +60,29 @@ dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts
 
 产物为 `artifacts/BBDownT.<版本号>.nupkg`（当前为 `BBDownT.2.1.4.nupkg`，包 ID 与 nuget.org 上的同名包一致）。
 
-安装为全局命令：
+安装为全局命令（用 `--source` 而**不是** `--add-source`）：
 
 ```
-dotnet tool install --global --add-source ./artifacts BBDownT
+dotnet tool install --global --source ./artifacts BBDownT
 ```
+
+> `--add-source` 只是**追加**源，nuget.org 仍会参与解析。上游已把 `BBDownT` 发到了 nuget.org（当前最新 `2.1.5`），而 `dotnet tool install` 默认解析所有源中的最高版本，因此会装到上游的 `2.1.5` 而不是本地的 `2.1.4`。`--source` 会用给定源**替换**全部源，只从 `./artifacts` 解析。
 
 只想在单个目录内使用时，可以装成局部工具：
 
 ```
-dotnet tool install --tool-path ./tools --add-source ./artifacts BBDownT
+dotnet tool install --tool-path ./tools --source ./artifacts BBDownT
 ./tools/BBDownT.exe "https://www.bilibili.com/video/BV1qt4y1X7TW"
 ```
 
 重新打包后更新，或卸载：
 
 ```
-dotnet tool update --global --add-source ./artifacts BBDownT
+dotnet tool update --global --source ./artifacts BBDownT
 dotnet tool uninstall --global BBDownT
 ```
 
-*PS: 本地包的 ID 与命令名和 nuget.org 上的 `BBDownT` 完全一致，不能与上游包同时安装。若之前装过上游版本，请先 `dotnet tool uninstall --global BBDownT`。安装时若提示找不到包，通常是 NuGet 官方源被镜像拦截或网络不可达，可以补一个只含本地源的 `nuget.config` 后改用 `--configfile` 安装：*
+*PS: 本地包的 ID 与命令名和 nuget.org 上的 `BBDownT` 完全一致，不能与上游包同时安装。若之前装过上游版本，请先 `dotnet tool uninstall --global BBDownT` 再装本地包；从上游高版本回退到本地低版本时需要追加 `--allow-downgrade`。另外若确实想保留其他源，也可以用 `--add-source ./artifacts --version 2.1.4` 显式锁定版本号。安装时若提示找不到包，通常是 NuGet 官方源被镜像拦截或网络不可达，可以补一个只含本地源的 `nuget.config` 后改用 `--configfile` 安装：*
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -149,6 +151,7 @@ Options:
   --cover-only                                   仅下载封面
   --debug                                        输出调试日志
   --skip-mux                                     跳过混流步骤
+  --simply-mux                                   精简混流，不增加描述、作者等信息
   --skip-subtitle                                跳过字幕下载
   --skip-cover                                   跳过封面下载
   --metadata-only                                输出文件已存在时仅更新其元数据(标题/描述/封面/章节/字幕)，不重新下载或重编码音视频流
@@ -240,6 +243,7 @@ Commands:
 - [x] **支持8K/HDR/HDR Vivid/杜比视界/杜比全景声下载**
 - [x] 自定义存储文件名
 - [x] 自动刷新cookie
+- [x] 下载完成后在输出目录写出 `bbdown.json` 元数据(来源链接 + 分P文件映射)，供后续脚本定位来源
 
 # TODO
 - [ ] 支持更多自定义选项
@@ -251,7 +255,7 @@ Commands:
 
 ---
 
-在`1.4.9`或更高版本中，BBDownT支持读取本地配置文件以简化命令行的手动输入。
+在`2.1.4`或更高版本中，BBDownT支持读取本地配置文件以简化命令行的手动输入。
 
 如果没有指定`--config-file`，则默认读取程序同目录下的`BBDownT.config`文件；若指定该参数，则读取对应文件。
 
@@ -313,7 +317,7 @@ BBDownT --migrate
 
 ---
 
-在`1.4.9`或更高版本中，BBDownT支持自定义合并时的文件名组成。
+在`2.1.4`或更高版本中，BBDownT支持自定义合并时的文件名组成。
 |  代码   | 含义  |
 |  ----  | ----  |
 `<videoTitle>`|视频主标题

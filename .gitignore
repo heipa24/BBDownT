@@ -18,6 +18,8 @@ mono_crash.*
 
 # Rider
 .idea
+.codebuddy
+.trae
 
 # macOS shit
 .DS_Store
