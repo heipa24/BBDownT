@@ -22,6 +22,21 @@ internal static class BBDownTDownloadUtil
         public bool ForceHttp { get; set; } = false;
         public bool MultiThread { get; set; } = false;
         public DownloadTask? RelatedTask { get; set; } = null;
+
+        /// <summary>
+        /// 返回禁用 aria2c 的副本(不改变原对象)。
+        /// 小体积文本/图片资源(弹幕 XML、封面)用不上 aria2 的多连接加速, 而 aria2 会在服务端返回
+        /// Content-Encoding: gzip/deflate 时无条件 inflate, 一旦正文不是 zlib 标准流就会报
+        /// libz "incorrect header check" 并以退出码 1 结束, 因此这类资源固定交给内置下载器处理。
+        /// </summary>
+        public DownloadConfig WithoutAria2c() => new()
+        {
+            UseAria2c = false,
+            Aria2cArgs = Aria2cArgs,
+            ForceHttp = ForceHttp,
+            MultiThread = MultiThread,
+            RelatedTask = RelatedTask
+        };
     }
 
     internal static async Task RangeDownloadToTmpAsync(
@@ -178,7 +193,7 @@ internal static class BBDownTDownloadUtil
         return declaredRangeLength;
     }
 
-    public static async Task DownloadFileAsync(string url, string path, DownloadConfig config)
+    public static async Task DownloadFileAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null)
     {
         if (string.IsNullOrEmpty(url)) return;
         if (config.ForceHttp) url = ReplaceUrl(url);
@@ -187,24 +202,25 @@ internal static class BBDownTDownloadUtil
         if (!string.IsNullOrEmpty(desDir) && !Directory.Exists(desDir)) Directory.CreateDirectory(desDir);
         if (config.UseAria2c)
         {
-            await DownloadWithAria2cAsync(url, path, config.Aria2cArgs);
-            Console.WriteLine();
-            return;
+            var attempt = await TryDownloadWithAria2cAsync(url, path, config.Aria2cArgs);
+            if (attempt.Succeeded)
+            {
+                Console.WriteLine();
+                return;
+            }
+            LogWarn($"aria2c 下载失败({attempt.ErrorMessage}), 自动切换为内置下载器重试...");
+            try
+            {
+                await DownloadFileCoreAsync(url, path, config, httpClient);
+                return;
+            }
+            catch (Exception ex)
+            {
+                throw new Aria2cDownloadException(
+                    $"aria2c 下载失败({attempt.ErrorMessage}), 内置下载器重试后仍失败: {ex.Message}", ex);
+            }
         }
-        int retry = 0;
-        string tmpName = Path.Combine(desDir, Path.GetFileNameWithoutExtension(path) + ".tmp");
-        reDown:
-        try
-        {
-            using var progress = new ProgressBar(config.RelatedTask);
-            await RangeDownloadToTmpAsync(0, url, tmpName, 0, null, (_, downloaded, total) => progress.Report((double)downloaded / total, downloaded));
-            File.Move(tmpName, path, true);
-        }
-        catch (Exception)
-        {
-            if (++retry == 3) throw;
-            goto reDown;
-        }
+        await DownloadFileCoreAsync(url, path, config, httpClient);
     }
 
     public static async Task<string[]> MultiThreadDownloadFileAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null)
@@ -213,10 +229,14 @@ internal static class BBDownTDownloadUtil
         LogDebug("Start downloading: {0}", url);
         if (config.UseAria2c)
         {
-            await DownloadWithAria2cAsync(url, path, config.Aria2cArgs);
-            DeleteStaleClipFiles(path);
-            Console.WriteLine();
-            return [];
+            var attempt = await TryDownloadWithAria2cAsync(url, path, config.Aria2cArgs);
+            if (attempt.Succeeded)
+            {
+                DeleteStaleClipFiles(path);
+                Console.WriteLine();
+                return [];
+            }
+            LogWarn($"aria2c 下载失败({attempt.ErrorMessage}), 自动切换为内置下载器重试...");
         }
         long fileSize;
         try
@@ -287,17 +307,104 @@ internal static class BBDownTDownloadUtil
         }
     }
 
-    private static async Task DownloadWithAria2cAsync(string url, string path, string extraArgs)
+    /// <summary>
+    /// aria2c 单次尝试的结果。Succeeded 为 true 表示已产出完整文件; 否则 ErrorMessage 记录失败原因。
+    /// </summary>
+    internal readonly record struct Aria2cAttempt(bool Succeeded, string ErrorMessage);
+
+    /// <summary>
+    /// aria2c 相关失败。顶层据此输出 --no-aria2 这类可执行建议, 而不是"请升级版本"。
+    /// </summary>
+    internal sealed class Aria2cDownloadException : InvalidOperationException
     {
-        var exitCode = await BBDownTAria2c.DownloadFileByAria2cAsync(url, path, extraArgs);
-        EnsureAria2cDownloadSucceeded(exitCode, path);
+        public Aria2cDownloadException(string message) : base(message) { }
+
+        public Aria2cDownloadException(string message, Exception innerException) : base(message, innerException) { }
+    }
+
+    /// <summary>
+    /// 调用 aria2c 并校验产物。失败时清理半成品与 .aria2 控制文件,
+    /// 避免下次 --continue=true 从损坏的断点续传(这正是 libz "incorrect header check" 的主要来源)。
+    /// </summary>
+    private static async Task<Aria2cAttempt> TryDownloadWithAria2cAsync(string url, string path, string extraArgs)
+    {
+        try
+        {
+            var exitCode = await BBDownTAria2c.DownloadFileByAria2cAsync(url, path, extraArgs);
+            EnsureAria2cDownloadSucceeded(exitCode, path);
+            return new Aria2cAttempt(true, string.Empty);
+        }
+        catch (Exception ex)
+        {
+            LogDebug("aria2c 下载失败: {0}", ex.Message);
+            DeleteAria2cLeftovers(path);
+            return new Aria2cAttempt(false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 内置下载器实现: 下载到 .tmp 后原子替换目标文件, 失败重试 3 次。
+    /// </summary>
+    private static async Task DownloadFileCoreAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null)
+    {
+        string desDir = Path.GetDirectoryName(path)!;
+        string tmpName = Path.Combine(desDir, Path.GetFileNameWithoutExtension(path) + ".tmp");
+        int retry = 0;
+        reDown:
+        try
+        {
+            using var progress = new ProgressBar(config.RelatedTask);
+            await RangeDownloadToTmpAsync(0, url, tmpName, 0, null,
+                (_, downloaded, total) => progress.Report((double)downloaded / total, downloaded),
+                false, httpClient);
+            File.Move(tmpName, path, true);
+        }
+        catch (Exception)
+        {
+            if (++retry == 3) throw;
+            goto reDown;
+        }
     }
 
     internal static void EnsureAria2cDownloadSucceeded(int exitCode, string path)
     {
-        if (exitCode != 0 || File.Exists(path + ".aria2") || !File.Exists(path))
+        if (exitCode != 0)
         {
-            throw new InvalidOperationException($"aria2下载失败，退出码: {exitCode}");
+            throw new Aria2cDownloadException($"aria2下载失败，退出码: {exitCode}");
+        }
+        if (File.Exists(path + ".aria2"))
+        {
+            throw new Aria2cDownloadException($"aria2下载未完成，残留控制文件: {Path.GetFileName(path)}.aria2");
+        }
+        if (!File.Exists(path))
+        {
+            throw new Aria2cDownloadException("aria2下载未生成目标文件");
+        }
+        if (new FileInfo(path).Length == 0)
+        {
+            throw new Aria2cDownloadException("aria2下载生成了空文件");
+        }
+    }
+
+    /// <summary>
+    /// 清理 aria2 残留: .aria2 控制文件与可能损坏的半成品。
+    /// aria2 自身已用 --max-tries=5 重试过, 退出非 0 时本地数据不可信, 直接丢弃重下最安全。
+    /// </summary>
+    internal static void DeleteAria2cLeftovers(string path)
+    {
+        TryDeleteFile(path + ".aria2");
+        TryDeleteFile(path);
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            LogDebug("删除文件失败 {0}: {1}", path, ex.Message);
         }
     }
 

@@ -749,22 +749,35 @@ partial class Program
                     var danmakuAssPath = Path.ChangeExtension(savePath, ".ass");
                     Log("正在下载弹幕Xml文件");
                     var danmakuUrl = $"https://comment.bilibili.com/{p.cid}.xml";
-                    await DownloadFileAsync(danmakuUrl, danmakuXmlPath, downloadConfig);
-                    var danmakus = DanmakuUtil.ParseXml(danmakuXmlPath);
-                    if (danmakus == null)
+                    // 弹幕 XML 是小体积文本资源, aria2 的多连接/续传没有任何收益。
+                    // 且 comment.bilibili.com 恒定返回 Content-Encoding: deflate 而正文是不带
+                    // zlib 头的 raw deflate(服务端无视 Accept-Encoding), aria2 按标准 zlib 头
+                    // inflate 必然失败并报 libz "incorrect header check", 退出码 1。
+                    // 内置下载器(AutomaticDecompression=All)可正常解码, 因此弹幕固定走内置下载器。
+                    await DownloadFileAsync(danmakuUrl, danmakuXmlPath, downloadConfig.WithoutAria2c());
+                    if (!IsUsableDanmakuXml(danmakuXmlPath))
                     {
-                        Log("弹幕Xml解析失败, 删除Xml...");
+                        LogWarn("弹幕Xml下载结果无效(空文件或不是XML内容), 删除Xml...");
                         File.Delete(danmakuXmlPath);
                     }
-                    else if (danmakus.Length == 0)
+                    else
                     {
-                        Log("当前视频没有弹幕, 删除Xml...");
-                        File.Delete(danmakuXmlPath);
-                    }
-                    else if (downloadDanmakuFormats.Contains(BBDownTDanmakuFormat.Ass))
-                    {
-                        Log("正在保存弹幕Ass文件...");
-                        await DanmakuUtil.SaveAsAssAsync(danmakus, danmakuAssPath);
+                        var danmakus = DanmakuUtil.ParseXml(danmakuXmlPath);
+                        if (danmakus == null)
+                        {
+                            Log("弹幕Xml解析失败, 删除Xml...");
+                            File.Delete(danmakuXmlPath);
+                        }
+                        else if (danmakus.Length == 0)
+                        {
+                            Log("当前视频没有弹幕, 删除Xml...");
+                            File.Delete(danmakuXmlPath);
+                        }
+                        else if (downloadDanmakuFormats.Contains(BBDownTDanmakuFormat.Ass))
+                        {
+                            Log("正在保存弹幕Ass文件...");
+                            await DanmakuUtil.SaveAsAssAsync(danmakus, danmakuAssPath);
+                        }
                     }
 
                     // delete xml if possible
@@ -790,7 +803,7 @@ partial class Program
                         return DownloadPageOutcome.Failed;
                     }
                     var newCoverPath = Path.ChangeExtension(savePath, Path.GetExtension(coverUrl));
-                    await DownloadFileAsync(coverUrl, newCoverPath, downloadConfig);
+                    await DownloadFileAsync(coverUrl, newCoverPath, downloadConfig.WithoutAria2c());
                     if (!IsUsableArtifact(newCoverPath))
                     {
                         LogWarn("封面下载未生成有效文件");
@@ -1024,6 +1037,27 @@ partial class Program
         return File.Exists(path) && new FileInfo(path).Length > 0;
     }
 
+    /// <summary>
+    /// 弹幕 Xml 下载结果的粗校验: 文件非空且内容以 '<' 开头。
+    /// 用于把"下载到了 gzip 二进制/空文件"和"XML 解析失败"区分开, 输出更准确的日志。
+    /// </summary>
+    internal static bool IsUsableDanmakuXml(string path)
+    {
+        if (!IsUsableArtifact(path)) return false;
+        try
+        {
+            using var reader = new StreamReader(path, detectEncodingFromByteOrderMarks: true);
+            var buffer = new char[256];
+            var read = reader.Read(buffer, 0, buffer.Length);
+            return new string(buffer, 0, read).TrimStart().StartsWith('<');
+        }
+        catch (Exception ex)
+        {
+            LogDebug("弹幕Xml校验失败: {0}", ex.Message);
+            return false;
+        }
+    }
+
     internal static void ApplyDashStreamSelection(MyOption myOption, ParsedResult parsedResult)
     {
         if (myOption.AudioOnly && myOption.VideoOnly)
@@ -1140,12 +1174,29 @@ partial class Program
             Console.BackgroundColor = ConsoleColor.Red;
             Console.ForegroundColor = ConsoleColor.White;
             var msg = Config.DEBUG_LOG ? e.ToString() : e.Message;
-            Console.Write($"{msg}{Environment.NewLine}请尝试升级到最新版本后重试!");
+            Console.Write($"{msg}{Environment.NewLine}{DescribeFailureHint(e)}");
             Console.ResetColor();
             Console.WriteLine();
             Thread.Sleep(1);
             Environment.Exit(1);
         }
+    }
+
+    /// <summary>
+    /// 顶层失败提示。aria2c 相关失败给出 --no-aria2 这类可执行建议, 其余保持原有的升级提示。
+    /// </summary>
+    internal static string DescribeFailureHint(Exception e)
+    {
+        var depth = 0;
+        for (Exception? ex = e; ex is not null && depth < 16; ex = ex.InnerException)
+        {
+            depth++;
+            if (ex is Aria2cDownloadException)
+            {
+                return "该错误来自 aria2c, 可尝试使用 --no-aria2 关闭 aria2 下载后重试!";
+            }
+        }
+        return "请尝试升级到最新版本后重试!";
     }
 
     internal static List<Video> SortTracks(List<Video> videoTracks, Dictionary<string, int> dfnPriority, Dictionary<string, byte> encodingPriority, bool videoAscending, bool encodingPriorityFirst)

@@ -454,7 +454,7 @@ public class BBDownTApiServer
             Console.WriteLine($"{(string.IsNullOrEmpty(task.Aid) ? task.TaskId : task.Aid)}下载失败");
             var msg = Config.DEBUG_LOG ? e.ToString() : e.Message;
             task.SetError(Logger.RedactSensitiveText(e.Message));
-            Console.Write($"{msg}{Environment.NewLine}请尝试升级到最新版本后重试!");
+            Console.Write($"{msg}{Environment.NewLine}{Program.DescribeFailureHint(e)}");
             Console.ResetColor();
             Console.WriteLine();
         }
