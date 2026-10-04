@@ -274,9 +274,12 @@ internal partial class Program
             BBDownTMuxer.FFMPEG = binPath;
         }
 
-        //寻找aria2c: PATH 中存在时默认启用, 可用 --no-aria2 显式关闭
-        if (myOption.NoAria2c)
+        //寻找aria2c: 默认使用内置下载器, 只有显式传入 --use-aria2c/-aria2 时才启用 aria2
+        if (!ShouldUseAria2c(myOption))
         {
+            // 指定了 aria2c 路径却没有启用 aria2 时给出提示, 避免"参数被静默忽略"
+            if (!string.IsNullOrEmpty(myOption.Aria2cPath))
+                LogWarn("已指定 --aria2c-path 但未启用 aria2, 本次将使用内置下载器 (需同时传入 --use-aria2c)");
             myOption.UseAria2c = false;
             BBDownTAria2c.ARIA2C = string.Empty;
         }
@@ -288,19 +291,21 @@ internal partial class Program
 
             if (string.IsNullOrEmpty(aria2cPath))
             {
-                //用户显式要求使用 aria2c 但未找到 -> 保持原有报错行为
-                if (myOption.UseAria2c)
-                    throw new Exception("找不到可执行的aria2c文件");
+                throw new Exception("找不到可执行的aria2c文件");
             }
-            else
-            {
-                var autoEnabled = !myOption.UseAria2c;
-                BBDownTAria2c.ARIA2C = aria2cPath;
-                myOption.UseAria2c = true;
-                if (autoEnabled)
-                    LogColor("检测到 aria2c, 已自动启用 aria2 下载 (使用 --no-aria2 可关闭)");
-            }
+
+            BBDownTAria2c.ARIA2C = aria2cPath;
         }
+    }
+
+    /// <summary>
+    /// 是否启用 aria2c。默认使用内置下载器, 只有显式传入 --use-aria2c/-aria2 时才启用。
+    /// 不再根据 PATH 中是否存在 aria2c 自动启用: comment.bilibili.com 返回的是不带 zlib 头的
+    /// raw deflate, aria2 按标准 zlib 头 inflate 必然失败, 内置下载器已能覆盖绝大多数场景。
+    /// </summary>
+    internal static bool ShouldUseAria2c(MyOption myOption)
+    {
+        return myOption.UseAria2c && !myOption.NoAria2c;
     }
 
     internal static bool NeedsMuxer(MyOption myOption)

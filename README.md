@@ -139,8 +139,8 @@ Options:
   -q, --dfn-priority <dfn-priority>              画质优先级,用逗号分隔 例: "8K 超高清, 1080P 高码率, HDR 真彩, 杜比视界"；与 -e 同时使用时越靠前越优先
   -info, --only-show-info                        仅解析音视频和字幕信息，不下载；配合 --sub-only 仅列出字幕
   --show-all                                     展示所有分P标题
-  -aria2, --use-aria2c                           调用aria2c进行下载(检测到PATH中存在aria2c时默认启用, 可用--no-aria2关闭)
-  --no-aria2                                     强制使用内置下载器, 即使PATH中存在aria2c也不启用aria2
+  -aria2, --use-aria2c                           调用aria2c进行下载(默认使用内置下载器, 需显式传入本参数才会启用aria2)
+  --no-aria2                                     强制使用内置下载器(当前版本默认即为内置下载器, 保留该参数用于兼容旧命令)
   -ia, --interactive                             交互式选择音视频和字幕；字幕支持多选
   -hs, --hide-streams                            不要显示所有可用音视频流
   -mt, --multi-thread                            使用多线程下载(默认开启)

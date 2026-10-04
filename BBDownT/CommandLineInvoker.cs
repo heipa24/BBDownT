@@ -20,8 +20,8 @@ internal static class CommandLineInvoker
     private static readonly Option<bool> HideStreams = new(["--hide-streams", "-hs"], "不要显示所有可用音视频流");
     private static readonly Option<bool> Interactive = new(["--interactive", "-ia"], "交互式选择音视频和字幕；字幕支持多选");
     private static readonly Option<bool> ShowAll = new(["--show-all"], "展示所有分P标题");
-    private static readonly Option<bool> UseAria2c = new(["--use-aria2c", "-aria2"], "调用aria2c进行下载(检测到PATH中存在aria2c时默认启用, 可用--no-aria2关闭)");
-    private static readonly Option<bool> NoAria2c = new(["--no-aria2"], "强制使用内置下载器, 即使PATH中存在aria2c也不启用aria2");
+    private static readonly Option<bool> UseAria2c = new(["--use-aria2c", "-aria2"], "调用aria2c进行下载(默认使用内置下载器, 需显式传入本参数才会启用aria2)");
+    private static readonly Option<bool> NoAria2c = new(["--no-aria2"], "强制使用内置下载器(当前版本默认即为内置下载器, 保留该参数用于兼容旧命令)");
     private static readonly Option<string> Aria2cArgs = new(["--aria2c-args"], "调用aria2c的附加参数(默认包含\"-x16 -s16 -j16 --min-split-size=1M\"等, 使用时注意字符串转义)");
     private static readonly Option<bool> MultiThread = new(["--multi-thread", "-mt"], "使用多线程下载(默认开启)");
     private static readonly Option<string> SelectPage = new(["--select-page", "-p"], "选择指定分p或分p范围: (-p 8 或 -p 1,2 或 -p 3-5 或 -p ALL 或 -p LAST 或 -p 3,5,LATEST)");
