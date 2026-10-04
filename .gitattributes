@@ -1,0 +1,3 @@
+# 统一采用「仓库内 LF、工作区 CRLF」标准模型：
+# git 在入库时归一化为 LF，检出时转换为 CRLF。
+* text=auto eol=crlf
