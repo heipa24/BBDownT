@@ -148,7 +148,56 @@ public class MetadataRefreshTests
             points: [new ViewPoint { title = "章节", start = 0, end = 10 }]);
 
         Assert.Contains("-map_chapters", args);
+        Assert.True(HasPair(args, "-map_chapters", "1"));   // 章节是 1 号输入(0 号是媒体文件)
+        FfmpegArgumentOrder.AssertSelectorsFollowInputs(args);
         Assert.Equal(before, Directory.GetFiles(Path.GetTempPath(), "bbdownt-chapters-*").Length);
+    }
+
+    [Theory]
+    [InlineData(false, false, false, false)] // 只有媒体文件
+    [InlineData(true, false, false, false)]  // 封面
+    [InlineData(false, true, false, false)]  // 字幕
+    [InlineData(false, false, true, false)]  // 章节
+    [InlineData(true, true, true, false)]    // 封面 + 字幕 + 章节
+    [InlineData(true, false, true, true)]    // audioOnly + 封面 + 章节
+    public void StreamSelectorsAreAlwaysPlacedAfterTheLastInput(bool withPic, bool withSub, bool withChapters, bool audioOnly)
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write(audioOnly ? "title.m4a" : "title.mp4", "media");
+        var pic = withPic ? files.Write("cover.jpg", "cover") : "";
+        List<Subtitle>? subs = withSub
+            ? [new Subtitle { lan = "zh-CN", url = "https://example.com/sub", path = files.Write("zh.srt", "1\n00:00:00,000 --> 00:00:01,000\n字幕\n") }]
+            : null;
+        List<ViewPoint>? points = withChapters ? [new ViewPoint { title = "章节", start = 0, end = 10 }] : null;
+
+        var args = Invoke(media, files.FilePath(audioOnly ? "staged.m4a" : "staged.mp4"),
+            pic: pic, subs: subs, points: points, audioOnly: audioOnly);
+
+        FfmpegArgumentOrder.AssertSelectorsFollowInputs(args);
+    }
+
+    [Fact]
+    public void CombinedRefreshUsesTheExpectedInputThenMappingOrder()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+        var cover = files.Write("cover.jpg", "cover");
+        var subtitle = files.Write("zh.srt", "1\n00:00:00,000 --> 00:00:01,000\n字幕\n");
+
+        var args = Invoke(media, files.FilePath("staged.mp4"), pic: cover,
+            subs: [new Subtitle { lan = "zh-CN", url = "https://example.com/sub", path = subtitle }],
+            points: [new ViewPoint { title = "章节", start = 0, end = 10 }]);
+
+        // -i 必须连续且顺序为 媒体 -> 封面 -> 字幕 -> 章节
+        var inputs = FfmpegArgumentOrder.Inputs(args);
+        Assert.Equal(4, inputs.Count);
+        Assert.Equal(new[] { media, cover, subtitle }, inputs.Take(3));
+        Assert.StartsWith("bbdownt-chapters-", Path.GetFileName(inputs[3]));
+
+        // 映射整体在 -i 之后, 且保持 视频/音频/封面/字幕 的相对顺序
+        Assert.Equal(new[] { "0:v:0?", "0:a?", "1", "2" }, FfmpegArgumentOrder.Mapped(args));
+        Assert.Equal(new[] { "3" }, FfmpegArgumentOrder.ChapterMappings(args));
+        FfmpegArgumentOrder.AssertSelectorsFollowInputs(args);
     }
 
     [Fact]

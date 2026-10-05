@@ -111,6 +111,67 @@ public class ChapterMetadataTests
         Assert.NotEqual("source handler", stream.GetProperty("tags").GetProperty("handler_name").GetString());
     }
 
+    // 复用 ChapterMuxFact: 需要 BBDOWN_CHAPTER_TEST_DIR + ffmpeg/ffprobe, 否则 Skip。
+    // BBDOWN_CHAPTER_TEST_DIR 指向一个独立空目录, refresh-source.mp4 / refresh-target.mp4 由本用例生成。
+    [ChapterMuxFact]
+    public void FFmpegRefresh_RewritesMetadataOfAnExistingMp4WithoutRecoding()
+    {
+        var root = Path.GetFullPath(Environment.GetEnvironmentVariable("BBDOWN_CHAPTER_TEST_DIR")!);
+        Assert.True(Directory.Exists(root));
+        var source = Path.Combine(root, "refresh-source.mp4");
+        var target = Path.Combine(root, "refresh-target.mp4");
+        Assert.False(File.Exists(source));
+        Assert.False(File.Exists(target));
+
+        var ffmpeg = BBDownTUtil.FindExecutable("ffmpeg")!;
+        var ffprobe = BBDownTUtil.FindExecutable("ffprobe")!;
+        // 造一个真实的"已存在输出文件": 视频 + 音频, 2 秒
+        RunTool(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-t", "2", "-c:v", "mpeg4", "-c:a", "aac", "-shortest", "-threads", "1",
+            "-metadata", "title=source title", source);
+        File.Copy(source, target, overwrite: true);
+
+        List<ViewPoint> points =
+        [
+            new() { title = "A=B;#C\\D\n第二行", start = 0, end = 1 },
+            new() { title = "片尾", start = 1, end = 2 }
+        ];
+
+        var before = Directory.GetFiles(Path.GetTempPath(), "bbdownt-chapters-*").Length;
+        var previousFfmpeg = BBDownTMuxer.FFMPEG;
+        try
+        {
+            BBDownTMuxer.FFMPEG = ffmpeg;
+            // 走生产同款路径: 目标文件自己作为输入, MediaOutput.Write 负责 staged + 原子替换
+            Assert.True(MediaOutput.Write(target, staged =>
+                BBDownTMuxer.UpdateMetadata(target, staged, title: "refreshed title", points: points)));
+        }
+        finally
+        {
+            BBDownTMuxer.FFMPEG = previousFfmpeg;
+        }
+
+        // 临时章节文件必须被清掉
+        Assert.Equal(before, Directory.GetFiles(Path.GetTempPath(), "bbdownt-chapters-*").Length);
+
+        var rawProbe = RunTool(ffprobe, "-v", "error", "-show_chapters",
+            "-show_streams", "-show_format", "-of", "json", target);
+        using var probe = JsonDocument.Parse(rawProbe);
+        var chapters = probe.RootElement.GetProperty("chapters").EnumerateArray().ToArray();
+        Assert.Equal(points.Select(point => point.title),
+            chapters.Select(chapter => chapter.GetProperty("tags").GetProperty("title").GetString()));
+        Assert.Equal(new[] { "0.000000", "1.000000" },
+            chapters.Select(chapter => chapter.GetProperty("start_time").GetString()));
+        Assert.Equal(new[] { "1.000000", "2.000000" },
+            chapters.Select(chapter => chapter.GetProperty("end_time").GetString()));
+        Assert.Equal("refreshed title", probe.RootElement.GetProperty("format")
+            .GetProperty("tags").GetProperty("title").GetString());
+        var streams = probe.RootElement.GetProperty("streams").EnumerateArray().ToArray();
+        Assert.Contains(streams, stream => stream.GetProperty("codec_type").GetString() == "video");
+        Assert.Contains(streams, stream => stream.GetProperty("codec_type").GetString() == "audio");
+    }
+
     private static string RunTool(string executable, params string[] arguments)
     {
         var start = new ProcessStartInfo(executable)

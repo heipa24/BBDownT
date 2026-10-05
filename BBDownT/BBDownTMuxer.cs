@@ -244,44 +244,67 @@ static partial class BBDownTMuxer
     {
         var usableSubs = subs?.Where(s => File.Exists(s.path) && File.ReadAllText(s.path) != "").ToList() ?? [];
         var hasPic = !string.IsNullOrEmpty(pic) && File.Exists(pic);
-        byte inputCount = 1;
-        List<string> inputArgs = ["-i", inputPath];
+        byte inputCount = 1;                        // 0 号输入固定是已存在的媒体文件
+        List<string> inputArgs = ["-i", inputPath]; // 输入选项组: 只允许 -i
+        List<string> mapArgs = [];                  // 输出侧流映射: 必须整体排在最后一个 -i 之后
         List<string> metaArgs = [];
+        byte picIndex = 0;
+        var subIndices = new byte[usableSubs.Count];
 
-        // 只搬运已有媒体流: 提供新封面时丢掉旧的 attached_pic, 提供新字幕时丢掉旧字幕流,
-        // 否则原样保留, 保证重复刷新幂等且不会因 --skip-cover/--skip-subtitle 丢内容。
-        if (!(audioOnly && hasPic)) inputArgs.AddRange(["-map", hasPic ? "0:v:0?" : "0:v?"]);
-        inputArgs.AddRange(["-map", "0:a?"]);
-        if (usableSubs.Count == 0) inputArgs.AddRange(["-map", "0:s?"]);
-
+        //----1. 先把所有 -i 连续拼完
+        // ffmpeg 会把出现在某个 -i 之前的选项归入该输入文件的选项组; -map / -map_chapters 是输出选项,
+        // 夹在 -i 之间会被当成输入选项, 直接报 "Option map ... cannot be applied to input url"。
         if (hasPic)
         {
-            inputArgs.AddRange(["-i", pic, "-map", inputCount.ToString()]);
-            inputCount++;
-            metaArgs.AddRange([$"-disposition:v:{(audioOnly ? "0" : "1")}", "attached_pic"]);
+            picIndex = inputCount++;
+            inputArgs.AddRange(["-i", pic]);
         }
 
         for (int i = 0; i < usableSubs.Count; i++)
         {
-            inputArgs.AddRange(["-i", usableSubs[i].path, "-map", inputCount.ToString()]);
-            inputCount++;
-            metaArgs.AddRange([$"-metadata:s:s:{i}", $"title={GetSubtitleCode(usableSubs[i].lan).Item2}", $"-metadata:s:s:{i}", $"language={GetSubtitleCode(usableSubs[i].lan).Item1}"]);
+            subIndices[i] = inputCount++;
+            inputArgs.AddRange(["-i", usableSubs[i].path]);
         }
 
         string? chaptersFile = null;
-        if (points != null && points.Count != 0)
-        {
-            // 刷新路径没有临时音视频目录, 章节元数据写到系统临时目录并在结束后删除
-            chaptersFile = Path.Combine(Path.GetTempPath(), $"bbdownt-chapters-{Guid.NewGuid():N}");
-            File.WriteAllText(chaptersFile, GetFFmpegMetaString(points));
-            inputArgs.AddRange(["-i", chaptersFile, "-map_chapters", inputCount.ToString()]);
-            inputCount++;
-        }
-
         try
         {
+            byte? chaptersIndex = null;
+            if (points != null && points.Count != 0)
+            {
+                // 刷新路径没有临时音视频目录, 章节元数据写到系统临时目录并在结束后删除;
+                // 写文件也放进 try: 写入中途失败时 finally 仍能清掉半截文件, 不留垃圾。
+                chaptersFile = Path.Combine(Path.GetTempPath(), $"bbdownt-chapters-{Guid.NewGuid():N}");
+                File.WriteAllText(chaptersFile, GetFFmpegMetaString(points));
+                chaptersIndex = inputCount++;
+                inputArgs.AddRange(["-i", chaptersFile]);
+            }
+
+            //----2. 最后一个 -i 之后才是输出侧的流映射, 相对顺序与改动前保持一致
+            // 只搬运已有媒体流: 提供新封面时丢掉旧的 attached_pic, 提供新字幕时丢掉旧字幕流,
+            // 否则原样保留, 保证重复刷新幂等且不会因 --skip-cover/--skip-subtitle 丢内容。
+            if (!(audioOnly && hasPic)) mapArgs.AddRange(["-map", hasPic ? "0:v:0?" : "0:v?"]);
+            mapArgs.AddRange(["-map", "0:a?"]);
+            if (usableSubs.Count == 0) mapArgs.AddRange(["-map", "0:s?"]);
+
+            if (hasPic)
+            {
+                mapArgs.AddRange(["-map", picIndex.ToString()]);
+                metaArgs.AddRange([$"-disposition:v:{(audioOnly ? "0" : "1")}", "attached_pic"]);
+            }
+
+            for (int i = 0; i < usableSubs.Count; i++)
+            {
+                mapArgs.AddRange(["-map", subIndices[i].ToString()]);
+                metaArgs.AddRange([$"-metadata:s:s:{i}", $"title={GetSubtitleCode(usableSubs[i].lan).Item2}", $"-metadata:s:s:{i}", $"language={GetSubtitleCode(usableSubs[i].lan).Item1}"]);
+            }
+
+            if (chaptersIndex is not null) mapArgs.AddRange(["-map_chapters", chaptersIndex.Value.ToString()]);
+
+            //----3. 拼接: -i 组 -> 映射组 -> 元数据组 -> 编码器/容器
             List<string> args = ["-loglevel", Config.DEBUG_LOG ? "verbose" : "warning", "-y"];
             args.AddRange(inputArgs);
+            args.AddRange(mapArgs);
             args.AddRange(metaArgs);
             args.AddRange(BuildContainerMetadataArgs(desc, title, author, episodeId, lang, pubTime, simplyMux));
             args.AddRange(["-c:v", "copy", "-c:a", "copy"]);

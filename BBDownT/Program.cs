@@ -1125,6 +1125,9 @@ partial class Program
             else
             {
                 LogError($"{savePath}元数据更新失败, 原文件未改动");
+                // ffmpeg 的 stderr 已由 RunExe 转发到控制台, 这里补上排查方向,
+                // 避免只剩顶层那句"请尝试升级到最新版本"把人带偏。
+                LogError("常见原因: ffmpeg 不在 PATH 或版本过旧、原文件损坏/不完整; 加 --debug 可查看完整 ffmpeg 命令");
                 outcome = DownloadPageOutcome.Failed;
             }
         }
