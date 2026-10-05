@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using static BBDownT.Core.Logger;
 
 namespace BBDownT;
@@ -19,18 +20,42 @@ internal static class LegacyLocalFileMigration
     {
         bool FileExists(string path);
         bool DirectoryExists(string path);
+        long FileLength(string path);
         void Copy(string sourceFileName, string destFileName);
         void Move(string sourceFileName, string destFileName);
         void Delete(string path);
+        void CreateDirectory(string path);
+        void SetUnixFileMode(string path, UnixFileMode mode);
     }
 
-    private sealed class RealFileOperations : IFileOperations
+    internal sealed class RealFileOperations : IFileOperations
     {
         public bool FileExists(string path) => File.Exists(path);
         public bool DirectoryExists(string path) => Directory.Exists(path);
+        public long FileLength(string path)
+        {
+            try { var info = new FileInfo(path); return info.Exists ? info.Length : 0; }
+            catch { return 0; }
+        }
         public void Copy(string sourceFileName, string destFileName) => File.Copy(sourceFileName, destFileName);
         public void Move(string sourceFileName, string destFileName) => File.Move(sourceFileName, destFileName);
-        public void Delete(string path) => File.Delete(path);
+        public void Delete(string path)
+        {
+            try
+            {
+                if (Directory.Exists(path)) Directory.Delete(path, true);
+                else if (File.Exists(path)) File.Delete(path);
+            }
+            catch { }
+        }
+        public void CreateDirectory(string path)
+        {
+            try { Directory.CreateDirectory(path); } catch { }
+        }
+        public void SetUnixFileMode(string path, UnixFileMode mode)
+        {
+            if (!OperatingSystem.IsWindows()) { try { File.SetUnixFileMode(path, mode); } catch { } }
+        }
     }
 
     // Called only by the explicit migrate command, never during normal startup.

@@ -65,7 +65,10 @@ partial class Program
 
     public static Task<int> Main(params string[] args)
     {
-        if (args is not ["--update"])
+        // 分离式 worker：由父进程以 <self> --update-worker <taskPath> 拉起，绝不经过 RootCommand。
+        if (args is ["--update-worker", var taskPath])
+            return BBDownTToolUpdater.RunWorkerAsync(taskPath);
+        if (args is not (["--update"] or ["--set-update-source", _]))
         {
             Console.CancelKeyPress += Console_CancelKeyPress;
         }
@@ -73,17 +76,19 @@ partial class Program
             args,
             RunApp,
             () => LegacyLocalFileMigration.Run(APP_DIR),
-            BBDownTSelfUpdater.RunAsync);
+            BBDownTToolUpdater.RunAsync,
+            SetUpdateSourceAsync);
     }
 
     internal static async Task<int> InvokeCommandLineAsync(
         string[] args,
         Func<MyOption, Task> runApp,
         Func<int> migrate,
-        Func<Task<int>>? update = null)
+        Func<Task<int>>? update = null,
+        Func<string, Task<int>>? setUpdateSource = null)
     {
         var rootCommand = CommandLineInvoker.GetRootCommand(runApp);
-        var updateOption = new Option<bool>("--update", "将独立可执行程序更新到最新正式版本；需单独使用")
+        var updateOption = new Option<bool>("--update", "使用本机 nupkg 重新打包并重装 dotnet tool；需单独使用")
         {
             Arity = ArgumentArity.Zero
         };
@@ -93,6 +98,16 @@ partial class Program
             if (!result.IsImplicit) result.ErrorMessage = updateUsageError;
         });
         rootCommand.AddOption(updateOption);
+        var setUpdateSourceOption = new Option<string>("--set-update-source", "记录用于 --update 重装的 nupkg 源目录（含 BBDownT.*.nupkg）；需单独使用")
+        {
+            Arity = ArgumentArity.ExactlyOne
+        };
+        const string setUpdateSourceUsageError = "--set-update-source需要单独使用，不能与视频地址、--update、--migrate 或其他参数一起传入";
+        setUpdateSourceOption.AddValidator(result =>
+        {
+            if (!result.IsImplicit) result.ErrorMessage = setUpdateSourceUsageError;
+        });
+        rootCommand.AddOption(setUpdateSourceOption);
         var migrateOption = new Option<bool>("--migrate", "手动迁移程序目录中的旧版BBDown配置、登录文件和下载记录")
         {
             Arity = ArgumentArity.Zero
@@ -214,6 +229,16 @@ partial class Program
             return await update();
         }
 
+        if (args.Length == 2 && args[0] == "--set-update-source")
+        {
+            if (setUpdateSource is null)
+            {
+                Console.Error.WriteLine("当前命令入口未配置更新源记录程序");
+                return 1;
+            }
+            return await setUpdateSource(args[1]);
+        }
+
         if (args.Length == 1 && args[0] == "--migrate")
         {
             return migrate();
@@ -231,6 +256,12 @@ partial class Program
         if (commandLineResult.FindResultFor(migrateOption) is { IsImplicit: false })
         {
             Console.Error.WriteLine(migrationUsageError);
+            return 1;
+        }
+
+        if (commandLineResult.FindResultFor(setUpdateSourceOption) is { IsImplicit: false })
+        {
+            Console.Error.WriteLine(setUpdateSourceUsageError);
             return 1;
         }
 
@@ -296,9 +327,65 @@ partial class Program
 
     private static Task RunApp(MyOption myOption)
     {
+        // 上次分离式更新（Windows 从 store 内重装）的结果汇报；静默、绝不阻塞正常启动。
+        try { UpdateTaskStore.TryReport(APP_DIR); } catch { }
+        // 机会性固化作用域记录：首次正常运行且探测到确定作用域时写一份 SourceDirectory=null 的记录。
+        // Detect 需要 store 包目录内的 DLL 位置（含 DotnetToolSettings.xml），不能用 ProcessPath（shim 所在目录无标记）。
+        try
+        {
+            var install = DotnetToolInstall.Detect(
+                typeof(Program).Assembly.Location,
+                DotnetToolInstall.GlobalToolsRoot(Environment.GetEnvironmentVariable),
+                Environment.CurrentDirectory,
+                Directory.Exists,
+                File.Exists);
+            UpdateSourceRecordStore.EnsureRecorded(APP_DIR, install);
+        }
+        catch { }
         //检测更新
         _ = CheckUpdateAsync();
         return DoWorkAsync(myOption);
+    }
+
+    /// <summary>
+    /// <c>--set-update-source &lt;目录&gt;</c>：显式记录一次 nupkg 源目录，供后续 <c>--update</c> 使用。
+    /// 在读取任何配置文件之前由入口短路调用；校验目录存在，并提示其中是否已有 BBDownT.*.nupkg。
+    /// 作用域不在此处确定（每次 --update 重新探测），故记录 scope 记为未知。
+    /// </summary>
+    internal static Task<int> SetUpdateSourceAsync(string? sourceDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(sourceDirectory))
+        {
+            Console.Error.WriteLine("--set-update-source 需要传入一个包含 BBDownT.*.nupkg 的目录");
+            return Task.FromResult(1);
+        }
+        // 去掉用户可能夹带的引号 / 首尾空白，并归一为绝对路径（更新时的工作目录不可控，相对路径会解析错位）
+        sourceDirectory = Path.GetFullPath(sourceDirectory.Trim('"', ' ', '\t'));
+        if (!Directory.Exists(sourceDirectory))
+        {
+            Console.Error.WriteLine($"目录不存在：{sourceDirectory}");
+            return Task.FromResult(1);
+        }
+        var candidate = NupkgInspector.FindCandidateNupkg(sourceDirectory);
+        if (candidate is null)
+            Console.Error.WriteLine($"提示：{sourceDirectory} 中暂未发现 BBDownT.*.nupkg，--update 时会跳过打包并尝试直接重装。");
+        else
+            Console.Error.WriteLine($"已在该目录找到候选包：{Path.GetFileName(candidate)}");
+        var record = new UpdateSourceRecord
+        {
+            SchemaVersion = 1,
+            PackageId = "BBDownT",
+            SourceDirectory = sourceDirectory,
+            Scope = "unknown",
+            RecordedAtUtc = DateTimeOffset.UtcNow
+        };
+        if (!UpdateSourceRecordStore.TrySave(APP_DIR, record))
+        {
+            Console.Error.WriteLine("无法写入更新源记录（APP_DIR 可能只读）。");
+            return Task.FromResult(1);
+        }
+        Console.WriteLine($"已记录更新源目录：{sourceDirectory}");
+        return Task.FromResult(0);
     }
 
     private static void StartServer(

@@ -31,7 +31,7 @@ dotnet tool install --global BBDownT
 dotnet tool update --global BBDownT
 ```
 
-独立二进制可运行 `BBDownT --update`（改名后如 `bbd --update`）更新到最新正式版。
+自行构建的包可用 `BBDownT --update` 自动重新打包并重装 dotnet tool：先执行一次 `BBDownT --set-update-source ./artifacts` 记录 nupkg 源目录（换机器或移动仓库后需重新记录）；若源目录位于仓库内，更新时会先执行 `dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts` 再重装。
 
 ## 下载
 
@@ -116,7 +116,7 @@ Linux 产物还要注意 glibc 兼容性：上游 CI 在 Ubuntu 18.04 容器内�
 dotnet test BBDownT.sln
 ```
 
-*PS: 自行构建的程序请不要使用 `BBDownT --update`。该命令固定从上游 LOVAHE/BBDownT 的正式 Release 拉取，会把当前程序替换为上游版本。*
+*PS: `BBDownT --update` 只使用本机 nupkg 源，不从上游拉取任何文件；源目录不在仓库内时跳过打包；Windows 下从 store 运行时转为分离式后台进程，日志见 `BBDownT.update.log`。更新前会自动备份 `BBDownT.data`/`BBDownTTV.data`/`BBDownTApp.data`/`BBDownT.config`/`BBDownT.archives`/`BBDownT.web.json`（cookie 与配置），更新后原样放回，不会丢失。*
 
 # 开始使用
 目前命令行参数支持情况
@@ -214,9 +214,10 @@ Options:
   --config-file <config-file>                    读取指定的BBDownT本地配置文件(默认为: BBDownT.config)
   --migrate                                      将程序目录中的旧版BBDown配置、登录文件和下载归档迁移为BBDownT文件
   --api-token <api-token>                        服务器API鉴权Token，监听非本机地址且未配置时会自动生成
-  --version                                      检查当前版本
-  --update                                       更新到最新版本
-  -?, -h, --help                                 帮助
+  --version                                      Show version information
+  --update                                       使用本机 nupkg 重新打包并重装 dotnet tool；需单独使用
+  --set-update-source <set-update-source>        记录用于 --update 重装的 nupkg 源目录（含 BBDownT.*.nupkg）；需单独使用
+  -?, -h, --help                                 Show help and usage information
 
 
 Commands:

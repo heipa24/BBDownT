@@ -212,11 +212,96 @@ public class CommandLineEntryTests
         Assert.Equal(0, result.DownloadCalls);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task SetUpdateSource_IsExplicitAndReturnsItsResult(int exitCode)
+    {
+        var result = await Invoke(["--set-update-source", "artifacts"], setUpdateSourceExitCode: exitCode);
+
+        Assert.Equal(exitCode, result.ExitCode);
+        Assert.Equal(1, result.SetUpdateSourceCalls);
+        Assert.Equal(0, result.MigrationCalls);
+        Assert.Equal(0, result.UpdateCalls);
+        Assert.Equal(0, result.DownloadCalls);
+    }
+
+    public static TheoryData<string[]> InvalidSetUpdateSourceArguments => new()
+    {
+        new[] { "--set-update-source", "artifacts", "--help" },
+        new[] { "--set-update-source", "artifacts", "--update" },
+        new[] { "--set-update-source", "artifacts", "--migrate" },
+        new[] { "fixture", "--set-update-source" },
+        new[] { "--set-update-source" }
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidSetUpdateSourceArguments))]
+    public async Task SetUpdateSource_RejectsBeingCombinedWithOtherArguments(string[] args)
+    {
+        var result = await Invoke(args);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.NotEmpty(result.Error);
+        Assert.Equal(0, result.SetUpdateSourceCalls);
+        Assert.Equal(0, result.MigrationCalls);
+        Assert.Equal(0, result.UpdateCalls);
+        Assert.Equal(0, result.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task SetUpdateSource_IsRejectedBeforeReadingConfig()
+    {
+        var result = await Invoke(["--set-update-source", "artifacts"], config: "--definitely-unknown\n");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.DoesNotContain("--definitely-unknown", result.Error);
+        Assert.Equal(0, result.SetUpdateSourceCalls);
+        Assert.Equal(0, result.MigrationCalls);
+        Assert.Equal(0, result.UpdateCalls);
+        Assert.Equal(0, result.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task SetUpdateSourceInConfig_IsRejectedWithoutUpdateOrDownload()
+    {
+        var result = await Invoke(["fixture"], config: "--set-update-source .\n");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(0, result.SetUpdateSourceCalls);
+        Assert.Equal(0, result.MigrationCalls);
+        Assert.Equal(0, result.UpdateCalls);
+        Assert.Equal(0, result.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task HelpAliases_ListBothUpdateOptions()
+    {
+        var result = await Invoke(["--help"], config: "");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("--update", result.Output);
+        Assert.Contains("--set-update-source", result.Output);
+        Assert.Equal(0, result.SetUpdateSourceCalls);
+        Assert.Equal(0, result.UpdateCalls);
+        Assert.Equal(0, result.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task UpdateWorkerArgument_IsNotRegisteredAsAnOption()
+    {
+        var result = await Invoke(["--help"], config: "");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.DoesNotContain("--update-worker", result.Output);
+    }
+
     private static async Task<InvocationResult> Invoke(
         string[] args,
         string? config = null,
         int migrationExitCode = 0,
-        int updateExitCode = 0)
+        int updateExitCode = 0,
+        int setUpdateSourceExitCode = 0)
     {
         var originalOutput = Console.Out;
         var originalError = Console.Error;
@@ -226,6 +311,7 @@ public class CommandLineEntryTests
         var migrations = 0;
         var updates = 0;
         var downloads = 0;
+        var setUpdateSources = 0;
         MyOption? bound = null;
         try
         {
@@ -247,8 +333,13 @@ public class CommandLineEntryTests
             {
                 updates++;
                 return Task.FromResult(updateExitCode);
+            },
+            dir =>
+            {
+                setUpdateSources++;
+                return Task.FromResult(setUpdateSourceExitCode);
             });
-            return new InvocationResult(code, output.ToString(), error.ToString(), migrations, updates, downloads, bound);
+            return new InvocationResult(code, output.ToString(), error.ToString(), migrations, updates, downloads, setUpdateSources, bound);
         }
         finally
         {
@@ -259,5 +350,5 @@ public class CommandLineEntryTests
     }
 
     private sealed record InvocationResult(
-        int ExitCode, string Output, string Error, int MigrationCalls, int UpdateCalls, int DownloadCalls, MyOption? Option);
+        int ExitCode, string Output, string Error, int MigrationCalls, int UpdateCalls, int DownloadCalls, int SetUpdateSourceCalls, MyOption? Option);
 }

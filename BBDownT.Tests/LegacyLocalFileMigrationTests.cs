@@ -179,6 +179,9 @@ public class LegacyLocalFileMigrationTests
 
         public bool FileExists(string path) => files.ContainsKey(path);
         public bool DirectoryExists(string path) => false;
+        public long FileLength(string path) => files.TryGetValue(path, out var c) ? c.Length : 0;
+        public void CreateDirectory(string path) { }
+        public void SetUnixFileMode(string path, UnixFileMode mode) { }
 
         public void Copy(string sourceFileName, string destFileName)
         {
