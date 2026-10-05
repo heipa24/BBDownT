@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using static BBDownT.Core.Entity.Entity;
 using static BBDownT.Core.Logger;
 using static BBDownT.Core.Util.HTTPUtil;
+using BBDownT.Core.Util;
 using System.Collections.Concurrent;
 
 namespace BBDownT;
@@ -39,6 +40,15 @@ internal static class BBDownTDownloadUtil
         };
     }
 
+    /// <summary>
+    /// 内置下载器的重试预算与 aria2 保持一致(--max-tries=5 --retry-wait=3),
+    /// 等待时间在此基础上指数增长并封顶, 以便扛过分钟级的网络抖动。
+    /// </summary>
+    internal const int ClipMaxAttempts = 5;
+    internal const int SingleFileMaxAttempts = 5;
+
+    private static readonly Func<int, Task> DefaultRetryDelay = milliseconds => Task.Delay(milliseconds);
+
     internal static async Task RangeDownloadToTmpAsync(
         int id,
         string url,
@@ -50,6 +60,9 @@ internal static class BBDownTDownloadUtil
         HttpClient? httpClient = null)
     {
         var validatorPath = tmpName + ".resume";
+        // clipLength > 0 表示有界分片: 完成后仍保留校验器, 页面级重试才可能靠探活跳过已下载部分。
+        // 单文件下载的 toPosition 为 null, 临时文件完成后会被整体改名, 校验器必须同步删除。
+        var clipLength = toPosition is > 0 ? toPosition.Value - fromPosition + 1 : 0;
         var resumeValidator = await DownloadResumeValidator.LoadAsync(validatorPath);
         using var fileStream = new FileStream(tmpName, FileMode.OpenOrCreate);
         fileStream.Seek(0, SeekOrigin.End);
@@ -58,9 +71,15 @@ internal static class BBDownTDownloadUtil
             fileStream.SetLength(0);
             fileStream.Position = 0;
         }
-        if (toPosition > 0 && fileStream.Position == toPosition - fromPosition + 1)
+        if (clipLength > 0 && fileStream.Position == clipLength)
         {
-            // 完整旧分片仍需重新验证远端实体；从头请求可避免跨版本拼接。
+            // 完整分片仍要重新验证远端实体: 同名分片可能是另一档清晰度留下的, 直接拼进成品会损坏文件。
+            // 上一段判断已保证此时一定有校验器; 校验不过即清空重下。
+            if (resumeValidator is not null && await IsRemoteClipUnchanged(url, fromPosition, resumeValidator, httpClient))
+            {
+                onProgress(id, clipLength, clipLength);
+                return;
+            }
             fileStream.SetLength(0);
             fileStream.Position = 0;
             resumeValidator = null;
@@ -68,17 +87,8 @@ internal static class BBDownTDownloadUtil
         var existingLength = fileStream.Position;
         var downloadedBytes = fromPosition + existingLength;
 
-        using var httpRequestMessage = new HttpRequestMessage();
-        if (!url.Contains("platform=android_tv_yst") && !url.Contains("platform=android"))
-            httpRequestMessage.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
-        httpRequestMessage.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
-        TryAddCookieHeader(httpRequestMessage, url);
-        httpRequestMessage.Headers.Range = new(downloadedBytes, toPosition);
-        if (existingLength > 0)
-        {
-            resumeValidator?.Apply(httpRequestMessage);
-        }
-        httpRequestMessage.RequestUri = new(url);
+        using var httpRequestMessage = BuildRangeRequest(url, downloadedBytes, toPosition,
+            existingLength > 0 ? resumeValidator : null);
 
         using var response = await (httpClient ?? AppHttpClient).SendAsync(httpRequestMessage, HttpCompletionOption.ResponseHeadersRead);
         if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
@@ -89,7 +99,7 @@ internal static class BBDownTDownloadUtil
                 && resumeValidator is not null
                 && resumeValidator.Matches(response))
             {
-                File.Delete(validatorPath);
+                if (clipLength == 0) File.Delete(validatorPath);
                 onProgress(id, existingLength, downloadedBytes);
                 return;
             }
@@ -151,8 +161,46 @@ internal static class BBDownTDownloadUtil
 
         var expectedTempLength = GetExpectedTempLength(existingLength, responseContentLength);
         if (expectedTempLength != null && expectedTempLength != fileStream.Length)
-            throw new Exception("Retry...");
-        File.Delete(validatorPath);
+            throw new IOException($"下载长度不符: 期望{expectedTempLength}字节, 实际{fileStream.Length}字节");
+        if (clipLength == 0) File.Delete(validatorPath);
+    }
+
+    internal static HttpRequestMessage BuildRangeRequest(string url, long from, long? to, DownloadResumeValidator? validator)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!url.Contains("platform=android_tv_yst") && !url.Contains("platform=android"))
+            request.Headers.TryAddWithoutValidation("Referer", "https://www.bilibili.com");
+        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0");
+        TryAddCookieHeader(request, url);
+        request.Headers.Range = new RangeHeaderValue(from, to);
+        validator?.Apply(request);
+        return request;
+    }
+
+    /// <summary>
+    /// 用单字节探针确认远端实体仍是校验器所指的那一份。服务端不支持条件请求时会返回整份资源(200),
+    /// 因此只认 206 + 校验器一致 + Content-Range 起点正确, 其余情况一律判为"已变化"并回到重下路径。
+    /// </summary>
+    private static async Task<bool> IsRemoteClipUnchanged(
+        string url,
+        long fromPosition,
+        DownloadResumeValidator validator,
+        HttpClient? httpClient)
+    {
+        try
+        {
+            using var probe = BuildRangeRequest(url, fromPosition, fromPosition, validator);
+            using var response = await (httpClient ?? AppHttpClient)
+                .SendAsync(probe, HttpCompletionOption.ResponseHeadersRead);
+            return response.StatusCode == HttpStatusCode.PartialContent
+                && validator.Matches(response)
+                && response.Content.Headers.ContentRange?.From == fromPosition;
+        }
+        catch (Exception ex)
+        {
+            LogDebug("分片探活失败, 该分片将重新下载: {0}", ex.Message);
+            return false;
+        }
     }
 
     internal static long? GetExpectedTempLength(long existingLength, long? responseContentLength)
@@ -193,7 +241,7 @@ internal static class BBDownTDownloadUtil
         return declaredRangeLength;
     }
 
-    public static async Task DownloadFileAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null)
+    public static async Task DownloadFileAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null, Func<int, Task>? retryDelay = null)
     {
         if (string.IsNullOrEmpty(url)) return;
         if (config.ForceHttp) url = ReplaceUrl(url);
@@ -211,7 +259,7 @@ internal static class BBDownTDownloadUtil
             LogWarn($"aria2c 下载失败({attempt.ErrorMessage}), 自动切换为内置下载器重试...");
             try
             {
-                await DownloadFileCoreAsync(url, path, config, httpClient);
+                await DownloadFileCoreAsync(url, path, config, httpClient, retryDelay);
                 return;
             }
             catch (Exception ex)
@@ -220,10 +268,10 @@ internal static class BBDownTDownloadUtil
                     $"aria2c 下载失败({attempt.ErrorMessage}), 内置下载器重试后仍失败: {ex.Message}", ex);
             }
         }
-        await DownloadFileCoreAsync(url, path, config, httpClient);
+        await DownloadFileCoreAsync(url, path, config, httpClient, retryDelay);
     }
 
-    public static async Task<string[]> MultiThreadDownloadFileAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null)
+    public static async Task<string[]> MultiThreadDownloadFileAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null, Func<int, Task>? retryDelay = null)
     {
         if (config.ForceHttp) url = ReplaceUrl(url);
         LogDebug("Start downloading: {0}", url);
@@ -250,13 +298,13 @@ internal static class BBDownTDownloadUtil
             {
                 ForceHttp = false,
                 RelatedTask = config.RelatedTask
-            });
+            }, retryDelay: retryDelay);
             DeleteStaleClipFiles(path);
             return [];
         }
         LogDebug("文件大小：{0} bytes", fileSize);
-        // A same-size track can belong to another quality or codec. Completed
-        // tracks have no entity validator; only validated range clips can resume.
+        // A same-size clip can belong to another quality or codec, so a clip without its
+        // entity validator is always re-fetched; validated completed clips are probed and kept.
         List<Clip> allClips = GetAllClips(fileSize);
         var clipPaths = allClips.Select(clip => Path.Combine(Path.GetDirectoryName(path)!,
             clip.index.ToString("00000") + "_" + Path.GetFileNameWithoutExtension(path)
@@ -269,30 +317,43 @@ internal static class BBDownTDownloadUtil
 
         using var progress = new ProgressBar(config.RelatedTask);
         progress.Report(0);
+        ConcurrentDictionary<int, Exception> clipFailures = new();
         await Parallel.ForEachAsync(allClips, async (clip, _) =>
         {
-            int retry = 0;
+            // 已有分片耗尽预算: 不再启动新分片。继续在断链上让每个分片各自空转重试只会把整轮拖死。
+            if (!clipFailures.IsEmpty) return;
             string tmp = clipPaths[clip.index];
-            reDown:
             try
             {
-                await RangeDownloadToTmpAsync(clip.index, url, tmp, clip.from, clip.to == -1 ? null : clip.to, (index, downloaded, _) =>
-                {
-                    clipProgress[index] = downloaded;
-                    progress.Report((double)clipProgress.Values.Sum() / fileSize, clipProgress.Values.Sum());
-                }, true, httpClient);
+                await NetworkRetry.RunWithDownloadRetryAsync(
+                    () => RangeDownloadToTmpAsync(clip.index, url, tmp, clip.from, clip.to == -1 ? null : clip.to,
+                        (index, downloaded, _) =>
+                        {
+                            clipProgress[index] = downloaded;
+                            progress.Report((double)clipProgress.Values.Sum() / fileSize, clipProgress.Values.Sum());
+                        }, true, httpClient),
+                    retryDelay ?? DefaultRetryDelay, ClipMaxAttempts, $"下载分片 {clip.index}", message => LogWarn(message));
             }
-            catch (NotSupportedException)
+            catch (NotSupportedException ex)
             {
-                if (++retry == 3) throw new Exception($"服务器可能并不支持多线程下载, 请使用 --multi-thread false 关闭多线程");
-                goto reDown;
+                // 服务端忽略 Range: 重试只会得到同样的 200, 直接给出可照做的关闭多线程建议
+                clipFailures[clip.index] = new NotSupportedException(
+                    "服务器可能并不支持多线程下载, 请使用 --multi-thread false 关闭多线程", ex);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                if (++retry == 3) throw new Exception($"Failed to download clip {clip.index}");
-                goto reDown;
+                clipFailures[clip.index] = ex;
             }
         });
+        if (!clipFailures.IsEmpty)
+        {
+            // 必须在返回分片清单之前抛出: 缺片的分片清单会让上层继续合并出损坏文件
+            var failure = clipFailures.OrderBy(item => item.Key).First();
+            if (failure.Value is NotSupportedException) throw failure.Value;
+            throw new Exception(
+                $"分片 {failure.Key} 下载失败(已重试{ClipMaxAttempts}次): {NetworkRetry.DescribeRootCause(failure.Value)}",
+                failure.Value);
+        }
         return clipPaths;
     }
 
@@ -345,24 +406,28 @@ internal static class BBDownTDownloadUtil
     /// <summary>
     /// 内置下载器实现: 下载到 .tmp 后原子替换目标文件, 失败重试 3 次。
     /// </summary>
-    private static async Task DownloadFileCoreAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null)
+    private static async Task DownloadFileCoreAsync(string url, string path, DownloadConfig config, HttpClient? httpClient = null, Func<int, Task>? retryDelay = null)
     {
         string desDir = Path.GetDirectoryName(path)!;
         string tmpName = Path.Combine(desDir, Path.GetFileNameWithoutExtension(path) + ".tmp");
-        int retry = 0;
-        reDown:
         try
         {
-            using var progress = new ProgressBar(config.RelatedTask);
-            await RangeDownloadToTmpAsync(0, url, tmpName, 0, null,
-                (_, downloaded, total) => progress.Report((double)downloaded / total, downloaded),
-                false, httpClient);
-            File.Move(tmpName, path, true);
+            await NetworkRetry.RunWithDownloadRetryAsync(
+                async () =>
+                {
+                    using var progress = new ProgressBar(config.RelatedTask);
+                    await RangeDownloadToTmpAsync(0, url, tmpName, 0, null,
+                        (_, downloaded, total) => progress.Report((double)downloaded / total, downloaded),
+                        false, httpClient);
+                    File.Move(tmpName, path, true);
+                },
+                retryDelay ?? DefaultRetryDelay, SingleFileMaxAttempts, $"下载{Path.GetFileName(path)}",
+                message => LogWarn(message));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            if (++retry == 3) throw;
-            goto reDown;
+            throw new Exception(
+                $"已重试{SingleFileMaxAttempts}次仍失败: {NetworkRetry.DescribeRootCause(ex)}", ex);
         }
     }
 

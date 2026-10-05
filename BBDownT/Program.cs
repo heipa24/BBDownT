@@ -342,8 +342,6 @@ partial class Program
             UpdateSourceRecordStore.EnsureRecorded(APP_DIR, install);
         }
         catch { }
-        //检测更新
-        _ = CheckUpdateAsync();
         return DoWorkAsync(myOption);
     }
 
@@ -417,8 +415,6 @@ partial class Program
             MaxFinishedTasks = maxFinishedTasks > 0 ? maxFinishedTasks : 1000,
             FinishedTaskRetentionSeconds = (finishedRetentionHours > 0 ? finishedRetentionHours : 24) * 60L * 60L
         };
-        //检测更新
-        _ = CheckUpdateAsync();
         var server = new BBDownTApiServer();
         server.SetUpServer(serverOptions);
         server.Run(actualListenUrl, apiToken);
@@ -656,6 +652,7 @@ partial class Program
         long pubTime = vInfo.PubTime;
         bool selected = false; //用户是否已经手动选择过了轨道
         int retryCount = 0;
+        int transientRetryCount = 0;
         var progressiveSelection = new ProgressiveStreamSelection();
         var requestedAudioLanguage = AudioLanguageSelection.Normalize(myOption.AudioLanguage);
         Task<ParsedResult> FetchTracks(string? language, string? quality = null) =>
@@ -746,11 +743,6 @@ partial class Program
             if (!p.points.Any())
             {
                 p.points = parsedResult.ExtraPoints;
-            }
-
-            if (Config.DEBUG_LOG)
-            {
-                File.WriteAllText($"debug_{DateTime.Now:yyyyMMddHHmmssfff}.json", parsedResult.WebJsonString);
             }
 
             var savePath = "";
@@ -1101,10 +1093,14 @@ partial class Program
         }
         catch (Exception ex) when (ex is not AudioLanguageUnavailableException)
         {
-            if (++retryCount > 2) throw;
-            LogError(ex.Message);
-            LogWarn("下载出现异常, 3秒后将进行自动重试...");
-            await Task.Delay(3000);
+            var decision = DecidePageRetry(ex, retryCount, transientRetryCount);
+            if (NetworkRetry.IsTransientNetworkError(ex)) transientRetryCount = decision.Attempt;
+            else retryCount = decision.Attempt;
+            LogError(WithRootCause(ex.Message, ex, "｜根因: "));
+            LogDebug("{0}", ex.ToString());
+            if (!decision.ShouldRetry) throw;
+            LogWarn($"下载出现异常, 第{decision.Attempt}次重试将在{decision.DelayMilliseconds / 1000}秒后开始(已下载分片会续传)...");
+            await Task.Delay(decision.DelayMilliseconds);
             goto downloadPage;
         }
     }
@@ -1212,8 +1208,7 @@ partial class Program
             else
             {
                 LogError($"{savePath}元数据更新失败, 原文件未改动");
-                // ffmpeg 的 stderr 已由 RunExe 转发到控制台, 这里补上排查方向,
-                // 避免只剩顶层那句"请尝试升级到最新版本"把人带偏。
+                // ffmpeg 的 stderr 已由 RunExe 转发到控制台, 这里补上常见原因, 免得只剩一句泛泛报错。
                 LogError("常见原因: ffmpeg 不在 PATH 或版本过旧、原文件损坏/不完整; 加 --debug 可查看完整 ffmpeg 命令");
                 outcome = DownloadPageOutcome.Failed;
             }
@@ -1263,7 +1258,7 @@ partial class Program
         {
             Console.BackgroundColor = ConsoleColor.Red;
             Console.ForegroundColor = ConsoleColor.White;
-            var msg = Config.DEBUG_LOG ? e.ToString() : e.Message;
+            var msg = Config.DEBUG_LOG ? e.ToString() : DescribeFailure(e);
             Console.Write($"{msg}{Environment.NewLine}{DescribeFailureHint(e)}");
             Console.ResetColor();
             Console.WriteLine();
@@ -1273,7 +1268,14 @@ partial class Program
     }
 
     /// <summary>
-    /// 顶层失败提示。aria2c 相关失败给出 --no-aria2 这类可执行建议, 其余保持原有的升级提示。
+    /// 非 --debug 的失败描述: 除顶层消息外再补一行根因。分片/接口失败常被逐层包装,
+    /// 只打印 e.Message 会让使用者和开发者都看不到真正的原因。
+    /// </summary>
+    internal static string DescribeFailure(Exception e) =>
+        WithRootCause(e.Message, e, Environment.NewLine + "根因: ");
+
+    /// <summary>
+    /// 顶层失败提示。aria2c 相关失败给出 --no-aria2 这类可执行建议, 其余给出可定位问题的 --debug 线索。
     /// </summary>
     internal static string DescribeFailureHint(Exception e)
     {
@@ -1286,7 +1288,11 @@ partial class Program
                 return "该错误来自 aria2c, 可尝试使用 --no-aria2 关闭 aria2 下载后重试!";
             }
         }
-        return "请尝试升级到最新版本后重试!";
+        if (NetworkRetry.IsTransientNetworkError(e))
+        {
+            return "本机网络或 DNS 暂时无法解析 bilibili/CDN 域名(断网、代理出口或 DNS 抖动的典型表现)。已下载分片会保留, 网络恢复后用同一条命令重跑即可续传!";
+        }
+        return "仅凭以上信息通常无法定位问题: 请加 --debug 重跑, 完整堆栈与接口原始响应会一并打印到屏幕上, 反馈问题时请直接粘贴整段输出!";
     }
 
     internal static List<Video> SortTracks(List<Video> videoTracks, Dictionary<string, int> dfnPriority, Dictionary<string, byte> encodingPriority, bool videoAscending, bool encodingPriorityFirst)

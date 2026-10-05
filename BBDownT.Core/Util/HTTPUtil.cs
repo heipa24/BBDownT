@@ -19,6 +19,14 @@ public static class HTTPUtil
         Timeout = TimeSpan.FromMinutes(2)
     };
 
+    // 幂等请求的发送与重试等待。单元测试整体替换后即可统计重试次数,
+    // 既不必真的联网, 也不用睡满退避时间。
+    internal static Func<HttpRequestMessage, Task<HttpResponseMessage>> SendTransport { get; set; } =
+        static request => AppHttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+    internal static Func<int, Task> SendRetryDelay { get; set; } =
+        static milliseconds => Task.Delay(milliseconds);
+
     private static readonly object UserAgentLock = new();
     private static readonly string[] AndroidDevices =
         ["Pixel 4", "Pixel 5", "Pixel 6", "Pixel 7", "Pixel 8", "Pixel 9", "SM-S9080", "SM-S9180",
@@ -167,9 +175,7 @@ public static class HTTPUtil
         bool forceAuthenticatedProfile = false)
     {
         var firstIdentity = ResolveRequestIdentity(url, requestedUserAgent, sendCookie, forceAuthenticatedProfile);
-        using var webRequest = CreateWebRequest(method, url, firstIdentity, sendCookie);
-        LogDebug("获取网页内容: Url: {0}, Headers: {1}", url, webRequest.Headers);
-        var response = await AppHttpClient.SendAsync(webRequest, HttpCompletionOption.ResponseHeadersRead);
+        var response = await SendWithNetworkRetryAsync(method, url, firstIdentity, sendCookie, "获取网页内容");
         if (response.StatusCode != HttpStatusCode.PreconditionFailed || requestedUserAgent is not null)
         {
             return response;
@@ -182,10 +188,29 @@ public static class HTTPUtil
         LogDebug(firstIdentity.BrowserProfile is null
             ? "服务端返回HTTP 412，自动更换User-Agent后重试"
             : "服务端返回HTTP 412，自动更换完整浏览器请求配置后重试");
-        using var retryRequest = CreateWebRequest(method, url, retryIdentity.Value, sendCookie);
-        LogDebug("重试获取网页内容: Url: {0}, Headers: {1}", url, retryRequest.Headers);
-        return await AppHttpClient.SendAsync(retryRequest, HttpCompletionOption.ResponseHeadersRead);
+        return await SendWithNetworkRetryAsync(method, url, retryIdentity.Value, sendCookie, "重试获取网页内容");
     }
+
+    /// <summary>
+    /// 发送幂等请求(GET/HEAD), 传输层瞬时故障时按退避自动重试。
+    /// HttpRequestMessage 不可重复发送, 因此每次尝试用 CreateWebRequest 重建一份。
+    /// </summary>
+    private static Task<HttpResponseMessage> SendWithNetworkRetryAsync(
+        HttpMethod method,
+        string url,
+        RequestIdentity identity,
+        bool sendCookie,
+        string logLabel) =>
+        NetworkRetry.RunWithNetworkRetryAsync(
+            async () =>
+            {
+                using var request = CreateWebRequest(method, url, identity, sendCookie);
+                LogDebug("{0}: Url: {1}, Headers: {2}", logLabel, url, request.Headers);
+                return await SendTransport(request);
+            },
+            SendRetryDelay,
+            logLabel,
+            message => LogDebug("{0}", message));
 
     internal static void ApplyWebRequestHeaders(
         HttpRequestMessage request,

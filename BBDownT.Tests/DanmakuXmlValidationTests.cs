@@ -70,8 +70,11 @@ public class DanmakuXmlValidationTests
     }
 
     [Fact]
-    public void DescribeFailureHint_KeepsUpgradeMessageForOtherErrors()
+    public void DescribeFailureHint_PointsAtDebugOutputForOtherErrors()
     {
-        Assert.Contains("升级", Program.DescribeFailureHint(new InvalidOperationException("boom")));
+        var hint = Program.DescribeFailureHint(new InvalidOperationException("boom"));
+
+        Assert.Contains("--debug", hint);
+        Assert.DoesNotContain(".json", hint);
     }
 }

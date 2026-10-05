@@ -86,7 +86,9 @@ public class Aria2cFallbackTests
             var error = await Assert.ThrowsAnyAsync<InvalidOperationException>(
                 () => BBDownTDownloadUtil.DownloadFileAsync(
                     "https://comment.bilibili.com/1.xml", destination,
-                    new BBDownTDownloadUtil.DownloadConfig { UseAria2c = true }, client));
+                    new BBDownTDownloadUtil.DownloadConfig { UseAria2c = true }, client,
+                    // 零延迟注入: 内置下载器已按 aria2 预算重试, 用例不该真的等退避
+                    _ => Task.CompletedTask));
 
             Assert.Contains("aria2", error.Message);
             Assert.Contains("boom", error.Message);
