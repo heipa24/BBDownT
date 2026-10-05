@@ -18,34 +18,6 @@ namespace BBDownT;
 
 static partial class BBDownTUtil
 {
-    public static async Task CheckUpdateAsync()
-    {
-        try
-        {
-            var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
-            string nowVer = $"{ver.Major}.{ver.Minor}.{ver.Build}";
-            string redirectUrl = await GetWebLocationAsync("https://github.com/LOVAHE/BBDownT/releases/latest");
-            string latestVer = redirectUrl.Replace("https://github.com/LOVAHE/BBDownT/releases/tag/", "");
-            latestVer = latestVer.TrimStart('v', 'V');
-            if (IsNewerVersion(nowVer, latestVer))
-            {
-                Console.Title = $"发现新版本：{latestVer}";
-                LogColor($"发现新版本：{latestVer}");
-            }
-        }
-        catch (Exception)
-        {
-            ;
-        }
-    }
-
-    internal static bool IsNewerVersion(string currentVersion, string candidateVersion)
-    {
-        return Version.TryParse(currentVersion.TrimStart('v', 'V'), out var current)
-            && Version.TryParse(candidateVersion.TrimStart('v', 'V'), out var candidate)
-            && candidate.CompareTo(current) > 0;
-    }
-
     public static async Task<string> GetAvIdAsync(string input)
     {
         var avid = input;
