@@ -33,6 +33,10 @@ internal sealed class UpdateTask
     public string? TargetVersion { get; set; }
     public bool AllowDowngrade { get; set; }
     public string? BackupDir { get; set; }
+    /// <summary>用于重装的 nupkg 绝对路径；与 <see cref="InstalledDllPath"/> 一起构成落地校验的两端。</summary>
+    public string? NupkgPath { get; set; }
+    /// <summary>重装后工具主程序集应落地的绝对路径；本地清单安装为 null（无从校验）。</summary>
+    public string? InstalledDllPath { get; set; }
 }
 
 /// <summary>分离式 worker 的结果，落于 <c>APP_DIR/BBDownT.update.result.json</c>。</summary>
@@ -55,7 +59,6 @@ internal static class UpdateFileNames
     internal const string RecordFile = "BBDownT.update.json";
     internal const string TaskFile = "BBDownT.update.task.json";
     internal const string ResultFile = "BBDownT.update.result.json";
-    internal const string LogFile = "BBDownT.update.log";
     internal const string LockFile = "BBDownT.update.lock";
 }
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
 
@@ -97,4 +98,35 @@ internal static class NupkgInspector
         var tail = name[(idx + 1)..];
         return Version.TryParse(tail, out var v) ? v : null;
     }
+
+    /// <summary>
+    /// 读取包内工具主程序集（<c>tools/&lt;tfm&gt;/any/BBDownT.dll</c>）的相对路径与 SHA-256，
+    /// 供重装后比对落地文件。读不出（包缺失、损坏、无该条目）返回 null —— 调用方据此判"无法校验"，不得当作通过。
+    /// </summary>
+    internal static (string RelativePath, byte[] Digest)? ReadToolPayloadDigest(string nupkgPath)
+    {
+        if (string.IsNullOrEmpty(nupkgPath) || !File.Exists(nupkgPath)) return null;
+        try
+        {
+            using var zip = ZipFile.OpenRead(nupkgPath);
+            var entry = zip.Entries.FirstOrDefault(e => IsToolDllEntry(e.FullName));
+            if (entry is null) return null;
+            using var stream = entry.Open();
+            return (NormalizeEntryPath(entry.FullName), SHA256.HashData(stream));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    // 只认 tools/ 下的主程序集：BBDownT.Core.dll 等依赖的结尾不是 "/BBDownT.dll"
+    private static bool IsToolDllEntry(string entryName)
+    {
+        var normalized = NormalizeEntryPath(entryName);
+        return normalized.StartsWith("tools/", StringComparison.OrdinalIgnoreCase)
+               && normalized.EndsWith("/" + PackageId + ".dll", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeEntryPath(string entryName) => entryName.Replace('\\', '/');
 }

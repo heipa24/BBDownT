@@ -75,14 +75,17 @@ public class ToolUpdaterTests
         Func<Func<string, string?>, string>? resolveMuxer = null,
         string currentDirectory = "",
         TextWriter? stdout = null,
-        TextWriter? stderr = null)
+        TextWriter? stderr = null,
+        Func<string, string?, string?>? verifyPayload = null)
     {
         return await BBDownTToolUpdater.RunAsyncCore(
             runner, ops, _ => null,
             resolveMuxer ?? (_ => "dotnet"),
             entryAssemblyLocation, appDir, currentDirectory, isWindows,
             stdout ?? TextWriter.Null, stderr ?? TextWriter.Null,
-            detect, tryFindCandidate, spawnWorker);
+            detect, tryFindCandidate, spawnWorker,
+            // 落地校验默认放行：这些用例关注命令编排，真实哈希比对由 ToolPayloadVerifierTests 覆盖
+            verifyPayload ?? ((_, _) => null));
     }
 
     [Fact]
@@ -241,6 +244,28 @@ public class ToolUpdaterTests
 
         Assert.Equal(0, code); // uninstall 仅告警，install 成功
         Assert.Equal(2, runner.Requests.Count);
+    }
+
+    [Fact]
+    public async Task Run_DoesNotClaimSuccess_WhenTheLandedPayloadDiffersFromTheNupkg()
+    {
+        var appDir = CreateAppDir();
+        var ops = new RecordingFileOperations();
+        RecordSource(appDir, ops);
+        var stderr = new StringWriter();
+
+        // SDK 全部命令都返回 0，但落地的仍是旧程序集（同版本重装 + 文件被占用）
+        var runner = new RecordingDotnetRunner { Script = _ => new DotnetCommandResult(0, "", "") };
+        var code = await Run(runner, ops, appDir, "x", true,
+            detect: () => GlobalInstall("2.1.4"), tryFindCandidate: _ => Candidate("2.1.4"),
+            stderr: stderr,
+            verifyPayload: (_, _) => "已安装的 BBDownT.dll 与新包内容不一致（旧文件仍被占用，SDK 跳过了实际写入）。");
+
+        Assert.Equal(1, code);
+        Assert.Contains("重装后校验失败", stderr.ToString());
+        Assert.Contains("退出所有正在运行的 BBDownT", stderr.ToString());
+        // 失败不得把记录刷成候选版本，否则日志里再也看不出装的是旧代码
+        Assert.Contains("\"PackageVersion\": \"2.1.4\"", File.ReadAllText(UpdateSourceRecordStore.PathIn(appDir)));
     }
 
     [Fact]
@@ -446,27 +471,166 @@ public class ToolUpdaterTests
     }
 
     [Fact]
-    public async Task Run_KeepsTheBackupDirectoryOnFailure_AndMentionsIt()
+    public async Task Run_KeepsTheBackupDirectory_WhenAProtectedFileWasClobbered()
     {
         var appDir = CreateAppDir();
         var ops = new RecordingFileOperations();
-        ops[Path.Combine(appDir, "BBDownT.data")] = "tok";
+        var cookie = Path.Combine(appDir, "BBDownT.data");
+        ops[cookie] = "SESSDATA=tok";
         RecordSource(appDir, ops);
         var stderr = new StringWriter();
 
-        var runner = new RecordingDotnetRunner { Script = _ => new DotnetCommandResult(1, "", "boom") };
+        var runner = new RecordingDotnetRunner
+        {
+            Script = r =>
+            {
+                // 重装把 cookie 换成了别的内容（非空，所以补缺不会覆盖它）
+                if (r.Arguments.Count >= 2 && r.Arguments[1] == "install") ops[cookie] = "SDK 写入的占位内容";
+                return new DotnetCommandResult(1, "", "boom");
+            }
+        };
         var code = await Run(runner, ops, appDir, "x", true,
             detect: () => GlobalInstall("2.1.4"), tryFindCandidate: _ => Candidate("2.1.5"),
             stderr: stderr);
 
         Assert.Equal(1, code);
-        // 失败：备份目录不被清理，且提示里出现备份路径
+        // 内容确实需要人工比对：备份目录留下，且提示里出现备份路径
         Assert.Contains(ops.Directories, d => d.Contains(UpdateStateGuard.BackupDirPrefix));
         Assert.Contains("备份", stderr.ToString());
     }
 
-    // 写一份真实记录文件（落盘，供 UpdateSourceRecordStore 读取），并（当提供 ops 时）在内存桩里登记源目录为“已存在”。
-    // 用 TrySave 走真正的 JSON 序列化，避免手写 JSON 把 Windows 反斜杠写成非法转义。
+    [Fact]
+    public async Task Run_DropsTheBackupDirectory_OnFailureWhenNothingNeedsRecovery()
+    {
+        var appDir = CreateAppDir();
+        var ops = new RecordingFileOperations();
+        var cookie = Path.Combine(appDir, "BBDownT.data");
+        ops[cookie] = "SESSDATA=tok";
+        RecordSource(appDir, ops);
+
+        // 失败但没有任何文件被破坏（例如前置锁检查拦下）：不要每次失败都在工具目录留一个残骸目录
+        var runner = new RecordingDotnetRunner { Script = _ => new DotnetCommandResult(1, "", "boom") };
+        var code = await Run(runner, ops, appDir, "x", true,
+            detect: () => GlobalInstall("2.1.4"), tryFindCandidate: _ => Candidate("2.1.5"));
+
+        Assert.Equal(1, code);
+        Assert.DoesNotContain(ops.Directories, d => d.Contains(UpdateStateGuard.BackupDirPrefix));
+        Assert.Equal("SESSDATA=tok", ops[cookie]);
+    }
+
+    // ---- 分离式 worker：落地校验与前置锁检查 ----
+
+    private static string WriteWorkerTask(string appDir, string? installedDllPath, string? nupkgPath = @"C:\src\artifacts\BBDownT.2.1.4.nupkg")
+    {
+        UpdateTaskStore.TryWrite(appDir, new UpdateTask
+        {
+            SourceDirectory = @"C:\src\artifacts",
+            Scope = "global",
+            ToolPath = @"C:\tools",
+            TargetVersion = "2.1.4",
+            NupkgPath = nupkgPath,
+            InstalledDllPath = installedDllPath
+        });
+        return UpdateTaskStore.TaskPathIn(appDir);
+    }
+
+    [Fact]
+    public async Task RunWorkerCore_ReportsFailure_WhenTheLandedPayloadDiffersFromTheNupkg()
+    {
+        var appDir = CreateAppDir();
+        var landedDll = Path.Combine(appDir, "BBDownT.dll");
+        File.WriteAllText(landedDll, "old");
+        var taskPath = WriteWorkerTask(appDir, landedDll);
+        var stderr = new StringWriter();
+        var runner = new RecordingDotnetRunner { Script = _ => new DotnetCommandResult(0, "", "") };
+
+        var code = await BBDownTToolUpdater.RunWorkerCore(
+            runner, new LegacyLocalFileMigration.RealFileOperations(), _ => null, _ => "dotnet",
+            appDir, TextWriter.Null, stderr, taskPath, (_, _) => "已安装的 BBDownT.dll 与新包内容不一致");
+
+        Assert.Equal(1, code);
+        Assert.Contains("重装后校验失败", stderr.ToString());
+        // 结果文件里中文会被转义成 \uXXXX，只断言可直接比对的部分
+        var result = File.ReadAllText(UpdateTaskStore.ResultPathIn(appDir));
+        Assert.Contains("\"Succeeded\": false", result);
+        Assert.Contains("--update", result);
+        Assert.False(File.Exists(taskPath)); // 任务已消费
+    }
+
+    [Fact]
+    public async Task RunWorkerCore_StillSucceeds_ForTaskFilesWithoutPathsToVerify()
+    {
+        var appDir = CreateAppDir();
+        var taskPath = WriteWorkerTask(appDir, installedDllPath: null, nupkgPath: null);
+        var stdout = new StringWriter();
+        var runner = new RecordingDotnetRunner { Script = _ => new DotnetCommandResult(0, "", "") };
+
+        var code = await BBDownTToolUpdater.RunWorkerCore(
+            runner, new LegacyLocalFileMigration.RealFileOperations(), _ => null, _ => "dotnet",
+            appDir, stdout, TextWriter.Null, taskPath, (_, _) => "不应被调用");
+
+        Assert.Equal(0, code);
+        Assert.Contains("未能校验重装结果", stdout.ToString());
+    }
+
+    [Fact]
+    public async Task RunWorkerCore_StopsBeforeAnyDestructiveCommand_WhenTheLandedFileIsHeldOpen()
+    {
+        if (!OperatingSystem.IsWindows()) return; // 文件锁是 Windows 语义，POSIX 为建议锁
+        var appDir = CreateAppDir();
+        var landedDll = Path.Combine(appDir, "BBDownT.dll");
+        File.WriteAllText(landedDll, "old");
+        var taskPath = WriteWorkerTask(appDir, landedDll);
+        var stderr = new StringWriter();
+        var runner = new RecordingDotnetRunner { Script = _ => new DotnetCommandResult(0, "", "") };
+
+        using var holder = new FileStream(landedDll, FileMode.Open, FileAccess.Read, FileShare.None);
+        var code = await BBDownTToolUpdater.RunWorkerCore(
+            runner, new LegacyLocalFileMigration.RealFileOperations(), _ => null, _ => "dotnet",
+            appDir, TextWriter.Null, stderr, taskPath, (_, _) => null);
+
+        Assert.Equal(1, code);
+        Assert.Contains("仍被其他进程占用", stderr.ToString());
+        // 关键：一次 dotnet 命令都没发，旧的 apphost 不会被改写成一副新面孔
+        Assert.Empty(runner.Requests);
+    }
+
+    [Fact]
+    public void ResolveWorkerAppDir_UsesTheDirectoryOfTheTaskFile()
+    {
+        // 副本 worker 由 dotnet CLI 拉起，Environment.ProcessPath 是 dotnet.exe，APP_DIR 会错指到 SDK 目录
+        var root = Path.Combine(Path.GetTempPath(), "bbdir-" + Guid.NewGuid().ToString("N"));
+        var taskPath = Path.Combine(root, "BBDownT.update.task.json");
+
+        Assert.Equal(root, BBDownTToolUpdater.ResolveWorkerAppDir(taskPath));
+    }
+
+    [Fact]
+    public void StageToolAssembly_CopiesThePayloadAndReusesTheSameStagingDir()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "bbstage-" + Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(root, "any");
+        var staging = Path.Combine(root, "worker");
+        Directory.CreateDirectory(source);
+        File.WriteAllText(Path.Combine(source, "BBDownT.dll"), "new");
+        File.WriteAllText(Path.Combine(source, "BBDownT.deps.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(source, "ja"));
+        File.WriteAllText(Path.Combine(source, "ja", "System.CommandLine.resources.dll"), "satellite");
+        try
+        {
+            Assert.Equal(staging, BBDownTToolUpdater.StageToolAssembly(source, staging));
+            Assert.Equal("new", File.ReadAllText(Path.Combine(staging, "BBDownT.dll")));
+            Assert.Equal("satellite", File.ReadAllText(Path.Combine(staging, "ja", "System.CommandLine.resources.dll")));
+
+            File.WriteAllText(Path.Combine(source, "BBDownT.dll"), "newer");
+            BBDownTToolUpdater.StageToolAssembly(source, staging);
+            // 固定目录反复覆盖，不会每次更新都留一份残骸
+            Assert.Equal("newer", File.ReadAllText(Path.Combine(staging, "BBDownT.dll")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    // 写一份真实记录文件（落盘，供 UpdateSourceRecordStore 读取），并（当提供 ops 时）在内存桩里登记源目录为“已存在”。    // 用 TrySave 走真正的 JSON 序列化，避免手写 JSON 把 Windows 反斜杠写成非法转义。
     private static void WriteRecord(string appDir, string sourceDirectory, string scope = "global", RecordingFileOperations? ops = null)
     {
         Directory.CreateDirectory(appDir);

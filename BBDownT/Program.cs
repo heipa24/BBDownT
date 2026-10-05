@@ -65,7 +65,8 @@ partial class Program
 
     public static Task<int> Main(params string[] args)
     {
-        // 分离式 worker：由父进程以 <self> --update-worker <taskPath> 拉起，绝不经过 RootCommand。
+        // 分离式 worker：由父进程以 dotnet <临时副本>\BBDownT.dll --update-worker <taskPath> 拉起，绝不经过 RootCommand。
+        // 必须是临时副本而不是自己：自己正锁着 store 里要替换的那份 dll。
         if (args is ["--update-worker", var taskPath])
             return BBDownTToolUpdater.RunWorkerAsync(taskPath);
         if (args is not (["--update"] or ["--set-update-source", _]))
@@ -311,7 +312,7 @@ partial class Program
         Console.BackgroundColor = ConsoleColor.DarkBlue;
         Console.ForegroundColor = ConsoleColor.White;
         var ver = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version!;
-        Console.Write($"BBDownT version {ver.Major}.{ver.Minor}.{ver.Build}, Bilibili Downloader.\r\n");
+        Console.Write($"BBDownT version {ver.Major}.{ver.Minor}.{ver.Build}{BuildRevisionSuffix()}, Bilibili Downloader.\r\n");
         Console.ResetColor();
         Console.Write("遇到问题请首先到以下地址查阅有无相关信息：\r\nhttps://github.com/LOVAHE/BBDownT/issues\r\n");
         Console.WriteLine();
@@ -323,6 +324,33 @@ partial class Program
         }
 
         return await parser.InvokeAsync(newArgsList.ToArray());
+    }
+
+    /// <summary>
+    /// 构建号后缀。用户装的常常不是最新源码（同版本重装会静默留下旧程序集），
+    /// 打印 commit 短号后，日志能直接对上仓库里的某一次提交。
+    /// </summary>
+    private static string BuildRevisionSuffix()
+    {
+        try
+        {
+            var attributes = typeof(Program).Assembly.GetCustomAttributesData();
+            var informational = attributes
+                .FirstOrDefault(a => a.AttributeType == typeof(System.Reflection.AssemblyInformationalVersionAttribute))
+                ?.ConstructorArguments.FirstOrDefault().Value as string;
+            var plus = informational is null ? -1 : informational.IndexOf('+');
+            if (plus < 0) return "";
+            var revision = informational![(plus + 1)..];
+            var dash = revision.IndexOf('-');
+            if (dash > 0) revision = revision[..dash];
+            // 非 git 构建时 SDK 会填一串 0
+            if (revision.Length < 7 || revision.All(c => c == '0')) return "";
+            return $", 构建 {revision[..7]}";
+        }
+        catch (Exception)
+        {
+            return "";
+        }
     }
 
     private static Task RunApp(MyOption myOption)

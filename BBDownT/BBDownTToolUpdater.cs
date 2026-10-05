@@ -61,10 +61,20 @@ internal static class BBDownTToolUpdater
         new LegacyLocalFileMigration.RealFileOperations(),
         Environment.GetEnvironmentVariable,
         DotnetCli.ResolveDotnetMuxer,
-        Program.APP_DIR,
+        ResolveWorkerAppDir(taskPath),
         Console.Out,
         Console.Error,
         taskPath);
+
+    /// <summary>
+    /// worker 的状态目录 = 任务文件所在目录（父进程写死的工具目录）。
+    /// 副本 worker 由 dotnet CLI 拉起，Environment.ProcessPath 指向 dotnet.exe，Program.APP_DIR 会错指到 dotnet 安装目录。
+    /// </summary>
+    internal static string ResolveWorkerAppDir(string taskPath)
+    {
+        var directory = Path.GetDirectoryName(taskPath);
+        return string.IsNullOrEmpty(directory) ? Program.APP_DIR : directory;
+    }
 
     // ---- 版本决策（纯函数，可单测）----
 
@@ -96,7 +106,8 @@ internal static class BBDownTToolUpdater
         TextWriter stderr,
         Func<ToolInstallInfo?>? detect = null,
         Func<string, NupkgCandidate?>? tryFindCandidate = null,
-        Func<string, int>? spawnWorker = null)
+        Func<string, int>? spawnWorker = null,
+        Func<string, string?, string?>? verifyPayload = null)
     {
         var lockStream = TryAcquireLock(appDir);
         if (lockStream is null)
@@ -165,19 +176,21 @@ internal static class BBDownTToolUpdater
                         ManifestPath = install.ManifestPath,
                         TargetVersion = candidate.Version.ToString(),
                         AllowDowngrade = allowDowngrade,
-                        BackupDir = backupDir
+                        BackupDir = backupDir,
+                        NupkgPath = candidate.Path,
+                        InstalledDllPath = ResolveLandedDll(candidate, install)
                     };
                     UpdateTaskStore.TryWrite(appDir, task);
                     // 分离路径同样回写记录（计划：--update 成功解析源后回写），否则记录里的版本永远是旧值
                     UpdateSourceRecordStore.TrySave(appDir, BuildRecord(source, install, candidate));
                     var code = (spawnWorker ?? DefaultSpawn())(UpdateTaskStore.TaskPathIn(appDir));
                     stdout.WriteLine("已启动后台更新（分离进程），不会阻塞当前命令。");
-                    stdout.WriteLine($"完成后会写入 {UpdateFileNames.LogFile}；下次运行 BBDownT 时会显示结果。");
+                    stdout.WriteLine($"完成后会写入 {UpdateFileNames.ResultFile}；下次运行 BBDownT 时会显示结果（含落地程序集的校验结论）。");
                     return code;
                 }
 
                 succeeded = await ExecuteAsync(runner, Muxer(resolveMuxer, getEnvironmentVariable),
-                    install, source, candidate, action, allowDowngrade, stdout, stderr);
+                    install, source, candidate, action, allowDowngrade, stdout, stderr, verifyPayload);
                 if (succeeded)
                 {
                     UpdateSourceRecordStore.TrySave(appDir, BuildRecord(source, install, candidate));
@@ -199,6 +212,7 @@ internal static class BBDownTToolUpdater
                 // 即便成功也兜底恢复（防止 SDK 误删同目录状态文件）；仅整体成功才清理备份。
                 UpdateStateGuard.RestoreIfMissing(appDir, backupDir, fileOps);
                 if (succeeded) UpdateStateGuard.Cleanup(backupDir, fileOps);
+                else UpdateStateGuard.CleanupIfNothingToRestore(appDir, backupDir, fileOps);
             }
         }
     }
@@ -214,7 +228,8 @@ internal static class BBDownTToolUpdater
         UpdateAction action,
         bool allowDowngrade,
         TextWriter stdout,
-        TextWriter stderr)
+        TextWriter stderr,
+        Func<string, string?, string?>? verifyPayload = null)
     {
         var workDir = install.Scope == ToolInstallScope.Local ? install.ManifestDirectory : null;
 
@@ -237,8 +252,38 @@ internal static class BBDownTToolUpdater
         var installResult = await RunDotnet(runner, muxer,
             DotnetToolInstall.InstallArguments(source.SourceDirectory, install, allowDowngrade), workDir,
             TimeSpan.FromMinutes(InstallTimeoutMinutes), stdout, stderr, CancellationToken.None);
-        return installResult.ExitCode == 0;
+        if (installResult.ExitCode != 0) return false;
+        return VerifyLandedPayload(candidate, install, stdout, stderr, verifyPayload);
     }
+
+    /// <summary>
+    /// 退出码 0 并不代表新代码真的落地：同 id 同版本重装时 SDK 可能只改写了 apphost。
+    /// 校验不过一律按失败处理，并给出可直接照做的下一步。
+    /// </summary>
+    private static bool VerifyLandedPayload(
+        NupkgCandidate candidate,
+        ToolInstallInfo install,
+        TextWriter stdout,
+        TextWriter stderr,
+        Func<string, string?, string?>? verifyPayload)
+    {
+        var landedDll = ResolveLandedDll(candidate, install);
+        var failure = (verifyPayload ?? ToolPayloadVerifier.Verify)(candidate.Path, landedDll);
+        if (failure is null)
+        {
+            stdout.WriteLine("已校验落地程序集与源包一致。");
+            return true;
+        }
+        stderr.WriteLine($"重装后校验失败：{failure}");
+        stderr.WriteLine("请先退出所有正在运行的 BBDownT（下载会锁住旧的程序集），再重新执行 BBDownT --update。");
+        return false;
+    }
+
+    /// <summary>落地路径 = store 目录 + 候选版本 + nupkg 内主程序集的相对路径。</summary>
+    private static string? ResolveLandedDll(NupkgCandidate candidate, ToolInstallInfo install)
+        => ToolPayloadVerifier.ResolveInstalledDllPath(
+            install.StoreRoot, install.PackageId, candidate.Version,
+            NupkgInspector.ReadToolPayloadDigest(candidate.Path)?.RelativePath);
 
     // ---- 分离式 worker 核心 ----
 
@@ -250,7 +295,8 @@ internal static class BBDownTToolUpdater
         string appDir,
         TextWriter stdout,
         TextWriter stderr,
-        string taskPath)
+        string taskPath,
+        Func<string, string?, string?>? verifyPayload = null)
     {
         var task = UpdateTaskStore.TryRead(taskPath);
         if (task is null)
@@ -274,6 +320,25 @@ internal static class BBDownTToolUpdater
             var install = new ToolInstallInfo(scope, task.ToolPath ?? "", null, null, "BBDownT", task.TargetVersion, task.ManifestPath);
             var workDir = scope == ToolInstallScope.Local ? install.ManifestDirectory : null;
 
+            // 破坏性动作之前先探一次锁：旧程序集被别的进程占用时，uninstall 只能半失败、install 会认为该版本已就位，
+            // 结果就是「报告更新完成但跑的还是旧代码」。
+            if (!ToolPayloadVerifier.IsAvailableForReplace(task.InstalledDllPath))
+            {
+                var occupied = $"{task.InstalledDllPath} 仍被其他进程占用（多半是正在运行的 BBDownT），本次未做任何改动。请退出后重新执行 BBDownT --update。";
+                stderr.WriteLine(occupied);
+                UpdateTaskStore.TryWriteResult(appDir, new UpdateTaskResult
+                {
+                    ExitCode = 1,
+                    Succeeded = false,
+                    Message = occupied,
+                    FinishedAtUtc = DateTimeOffset.UtcNow
+                });
+                UpdateTaskStore.TryRemoveTask(taskPath);
+                // 一个破坏性命令都没发，备份里没有可救的东西，别在工具目录留残骸
+                UpdateStateGuard.CleanupIfNothingToRestore(appDir, task.BackupDir, fileOps);
+                return 1;
+            }
+
             await RunDotnet(runner, Muxer(resolveMuxer, getEnvironmentVariable),
                 DotnetToolInstall.UninstallArguments(install), workDir,
                 TimeSpan.FromMinutes(UninstallTimeoutMinutes), stdout, stderr, CancellationToken.None);
@@ -281,15 +346,27 @@ internal static class BBDownTToolUpdater
                 DotnetToolInstall.InstallArguments(task.SourceDirectory, install, task.AllowDowngrade), workDir,
                 TimeSpan.FromMinutes(InstallTimeoutMinutes), stdout, stderr, CancellationToken.None);
 
-            var ok = installResult.ExitCode == 0;
+            // 退出码 0 不等于新代码落地：同 id 同版本时 SDK 可能只改写 apphost，仍需比对落地程序集。
+            string? payloadFailure = null;
+            if (installResult.ExitCode == 0 && task.NupkgPath is not null && task.InstalledDllPath is not null)
+                payloadFailure = (verifyPayload ?? ToolPayloadVerifier.Verify)(task.NupkgPath, task.InstalledDllPath);
+            else if (installResult.ExitCode == 0)
+                stdout.WriteLine("任务文件缺少落地程序集路径，本次未能校验重装结果。");
+            if (payloadFailure is not null)
+                stderr.WriteLine($"重装后校验失败：{payloadFailure}");
+            var ok = installResult.ExitCode == 0 && payloadFailure is null;
             // 重装后补缺恢复受保护状态文件（绝不覆盖），仅成功清理备份。
             UpdateStateGuard.RestoreIfMissing(appDir, task.BackupDir, fileOps);
             if (ok) UpdateStateGuard.Cleanup(task.BackupDir, fileOps);
+            else UpdateStateGuard.CleanupIfNothingToRestore(appDir, task.BackupDir, fileOps);
             UpdateTaskStore.TryWriteResult(appDir, new UpdateTaskResult
             {
-                ExitCode = installResult.ExitCode,
+                ExitCode = ok ? installResult.ExitCode : 1,
                 Succeeded = ok,
-                Message = ok ? "dotnet tool 已重装" : "dotnet tool 重装失败，请查看日志",
+                Message = ok ? "dotnet tool 已重装"
+                    : payloadFailure is not null
+                        ? $"{payloadFailure} 请退出所有正在运行的 BBDownT 后重新执行 BBDownT --update。"
+                        : "dotnet tool 重装失败，请查看日志",
                 FinishedAtUtc = DateTimeOffset.UtcNow
             });
             UpdateTaskStore.TryRemoveTask(taskPath); // 任务已消费，清理残留
@@ -359,16 +436,22 @@ internal static class BBDownTToolUpdater
 
     private static Func<string, int> DefaultSpawn() => taskPath =>
     {
-        var psi = new ProcessStartInfo
-        {
-            FileName = Environment.ProcessPath ?? "dotnet",
-            ArgumentList = { "--update-worker", taskPath },
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
+        // 不能直接重启自己：本进程正加载着 store 里的 BBDownT.dll，Windows 会锁住该文件，
+        // 于是 uninstall/install 永远换不掉真正要升级的那一份。改为复制一份到临时目录，
+        // 由 dotnet 拉起副本执行重装——副本锁住的是它自己那份拷贝。
         try
         {
-            using var process = Process.Start(psi);
+            var assemblyDir = Path.GetDirectoryName(typeof(BBDownTToolUpdater).Assembly.Location);
+            if (string.IsNullOrEmpty(assemblyDir)) return 1; // single-file 形态没有可复制的程序集目录
+            var staging = StageToolAssembly(assemblyDir, Path.Combine(Path.GetTempPath(), StagingFolderName));
+            var psi = new ProcessStartInfo
+            {
+                FileName = DotnetCli.ResolveDotnetMuxer(Environment.GetEnvironmentVariable),
+                ArgumentList = { Path.Combine(staging, "BBDownT.dll"), "--update-worker", taskPath },
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            Process.Start(psi);
             return 0; // 不等待：worker 自行完成并写结果
         }
         catch (Exception)
@@ -376,6 +459,26 @@ internal static class BBDownTToolUpdater
             return 1;
         }
     };
+
+    /// <summary>固定名字的暂存目录，重复使用以免每次更新都在临时目录留一份残骸。</summary>
+    internal const string StagingFolderName = "bbdownt-update-worker";
+
+    internal static string StageToolAssembly(string sourceDir, string stagingDir)
+    {
+        Directory.CreateDirectory(stagingDir);
+        // 连子目录一起复制（卫星资源程序集位于 cs/、ja/ 等子目录）
+        foreach (var file in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(stagingDir, Path.GetRelativePath(sourceDir, file));
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target, true);
+            }
+            catch (IOException) { } // 上一份副本仍被占用：沿用现有文件，结果仍由落地校验兜底
+        }
+        return stagingDir;
+    }
 
     private static string Muxer(Func<Func<string, string?>, string> resolveMuxer, Func<string, string?> getEnv)
         => resolveMuxer(getEnv);

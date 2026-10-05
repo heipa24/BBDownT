@@ -33,6 +33,10 @@ dotnet tool update --global BBDownT
 
 自行构建的包可用 `BBDownT --update` 自动重新打包并重装 dotnet tool：先执行一次 `BBDownT --set-update-source ./artifacts` 记录 nupkg 源目录（换机器或移动仓库后需重新记录）；若源目录位于仓库内，更新时会先执行 `dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts` 再重装。
 
+重装完成后会比对**落地程序集**与源包内 `BBDownT.dll` 的 SHA-256，一致才算成功。`dotnet tool install` 没有 `--force`，若旧程序集仍被正在运行的 BBDownT 占用，SDK 会只改写 apphost 并返回 0（表现为「提示更新完成，但跑的还是旧代码」）；现在这种情况会在执行 uninstall 之前就停下并提示退出正在运行的 BBDownT 后重试。
+
+Windows 上从 store 内运行时，更新由一个**临时副本**进程完成（先把程序集复制到 `%TEMP%\bbdownt-update-worker` 再用 `dotnet` 拉起副本）：正在运行的 BBDownT 自己锁着待替换的 `BBDownT.dll`，用自身进程重装必然失败。更新结论写入 `BBDownT.update.result.json`，下次启动时汇报一次。
+
 ## 下载
 
 Release版本：https://github.com/LOVAHE/BBDownT/releases
@@ -116,7 +120,7 @@ Linux 产物还要注意 glibc 兼容性：上游 CI 在 Ubuntu 18.04 容器内�
 dotnet test BBDownT.sln
 ```
 
-*PS: `BBDownT --update` 只使用本机 nupkg 源，不从上游拉取任何文件；源目录不在仓库内时跳过打包；Windows 下从 store 运行时转为分离式后台进程，日志见 `BBDownT.update.log`。更新前会自动备份 `BBDownT.data`/`BBDownTTV.data`/`BBDownTApp.data`/`BBDownT.config`/`BBDownT.archives`/`BBDownT.web.json`（cookie 与配置），更新后原样放回，不会丢失。*
+*PS: `BBDownT --update` 只使用本机 nupkg 源，不从上游拉取任何文件；源目录不在仓库内时跳过打包；Windows 下从 store 运行时转为分离式后台进程，结果写入 `BBDownT.update.result.json`，下次启动时汇报（重装后会比对落地 `BBDownT.dll` 与源包的 SHA-256，比对不过就按失败处理）。更新前会自动备份 `BBDownT.data`/`BBDownTTV.data`/`BBDownTApp.data`/`BBDownT.config`/`BBDownT.archives`/`BBDownT.web.json`（cookie 与配置），更新后原样放回，不会丢失。*
 
 # 开始使用
 目前命令行参数支持情况

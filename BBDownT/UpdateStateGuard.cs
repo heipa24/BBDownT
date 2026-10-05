@@ -106,4 +106,36 @@ internal static class UpdateStateGuard
             // 静默：残留一个备份目录远比删不掉严重
         }
     }
+
+    /// <summary>
+    /// 失败收尾：备份只有在"还有东西可救"时才值得留在工具目录里。
+    /// 快照里的每个文件若在 <paramref name="appDir"/> 都存在且长度与快照一致，说明补缺已生效或根本没人动过，删掉备份；
+    /// 长度不同（被截断/覆盖但非空，RestoreIfMissing 按约定不会覆盖）或缺失则保留，供用户手动恢复。永不抛。
+    /// </summary>
+    internal static void CleanupIfNothingToRestore(
+        string appDir, string? backupDir, LegacyLocalFileMigration.IFileOperations? operations = null)
+    {
+        operations ??= new LegacyLocalFileMigration.RealFileOperations();
+        if (backupDir is null)
+            return;
+        try
+        {
+            if (!operations.DirectoryExists(backupDir))
+                return;
+            foreach (var name in DurableStateFiles)
+            {
+                var src = Path.Combine(backupDir, name);
+                if (!operations.FileExists(src))
+                    continue;
+                var dest = Path.Combine(appDir, name);
+                if (!operations.FileExists(dest) || operations.FileLength(dest) != operations.FileLength(src))
+                    return; // 缺失或被改成别的内容：保留备份
+            }
+            Cleanup(backupDir, operations);
+        }
+        catch (Exception)
+        {
+            // 静默：清理失败不影响更新结果
+        }
+    }
 }
