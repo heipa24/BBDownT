@@ -19,6 +19,10 @@ static partial class BBDownTMuxer
     public static string FFMPEG = "ffmpeg";
     public static string MP4BOX = "mp4box";
 
+    // 非 --debug 时只要 error 级: 输出小且都是真问题, 便于失败时随调试信息一起补打;
+    // --debug 下放宽到 verbose 以便看完整过程
+    private static string[] FfmpegLogArgs() => ["-v", Config.DEBUG_LOG ? "verbose" : "error"];
+
     private static int RunExe(string app, IEnumerable<string> args, bool customBin = false)
     {
         int code = 0;
@@ -33,7 +37,7 @@ static partial class BBDownTMuxer
         p.StartInfo.CreateNoWindow = false;
         p.ErrorDataReceived += delegate (object sendProcess, DataReceivedEventArgs output) {
             if (!string.IsNullOrWhiteSpace(output.Data))
-                Log(output.Data);
+                LogDebug("{0}", output.Data);
         };
         p.StartInfo.StandardErrorEncoding = Encoding.UTF8;
         p.Start();
@@ -199,7 +203,7 @@ static partial class BBDownTMuxer
         }
 
         //----分析完毕
-        List<string> args = ["-loglevel", Config.DEBUG_LOG ? "verbose" : "warning", "-y"];
+        List<string> args = [.. FfmpegLogArgs(), "-y"];
         args.AddRange(inputArgs);
         args.AddRange(metaArgs);
         args.AddRange(BuildContainerMetadataArgs(desc, title, author, episodeId, lang, pubTime, simplyMux));
@@ -302,7 +306,7 @@ static partial class BBDownTMuxer
             if (chaptersIndex is not null) mapArgs.AddRange(["-map_chapters", chaptersIndex.Value.ToString()]);
 
             //----3. 拼接: -i 组 -> 映射组 -> 元数据组 -> 编码器/容器
-            List<string> args = ["-loglevel", Config.DEBUG_LOG ? "verbose" : "warning", "-y"];
+            List<string> args = [.. FfmpegLogArgs(), "-y"];
             args.AddRange(inputArgs);
             args.AddRange(mapArgs);
             args.AddRange(metaArgs);
@@ -354,7 +358,7 @@ static partial class BBDownTMuxer
 
     private static int ConvertFlvSegment(string input, string output)
     {
-        List<string> args = ["-loglevel", "warning", "-y", "-i", input, "-map", "0", "-c", "copy", "-f", "mpegts", "-bsf:v", "h264_mp4toannexb", output];
+        List<string> args = [.. FfmpegLogArgs(), "-y", "-i", input, "-map", "0", "-c", "copy", "-f", "mpegts", "-bsf:v", "h264_mp4toannexb", output];
         LogDebug("ffmpeg命令: {0}", FormatCommandForLog(args));
         return RunExe(FFMPEG, args, FFMPEG != "ffmpeg");
     }

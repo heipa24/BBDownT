@@ -520,6 +520,7 @@ partial class Program
         // 加载认证信息
         string? webCookieFilePath = LoadCredentials(myOption);
         await BBDownTCookieRefreshUtil.TryRefreshCookieAsync(webCookieFilePath);
+        ClearRecentDebugLines();
 
         // 检测是否登录了账号
         if (myOption is { UseIntlApi: false, UseTvApi: false } && Config.AREA == "")
@@ -531,11 +532,13 @@ partial class Program
             {
                 LogWarn("你尚未登录B站账号, 解析可能受到限制");
             }
+            ClearRecentDebugLines();
         }
 
         Log("获取aid...");
         aidOri = await GetAvIdAsync(input);
         Log($"获取aid结束: {aidOri}");
+        ClearRecentDebugLines();
 
         if (string.IsNullOrEmpty(aidOri))
         {
@@ -570,6 +573,7 @@ partial class Program
             fetcher = FetcherFactory.CreateFetcher(aidOri, myOption.UseIntlApi);
             vInfo = await fetcher.FetchAsync(aidOri);
         }
+        ClearRecentDebugLines();
 
         string title = vInfo.Title;
         long pubTime = vInfo.PubTime;
@@ -658,6 +662,8 @@ partial class Program
         Task<ParsedResult> FetchTracks(string? language, string? quality = null) =>
             ExtractTracksAsync(aidOri, p.aid, p.cid, p.epid, myOption.UseTvApi, myOption.UseIntlApi,
                 myOption.UseAppApi, firstEncoding ?? string.Empty, quality ?? progressiveSelection.RequestedQuality, language);
+        // 阶段边界: 每个分P清一次缓冲; 下方 goto 重试不清, 以便保留各次尝试的记录
+        ClearRecentDebugLines();
         downloadPage:
         try
         {
@@ -1208,7 +1214,7 @@ partial class Program
             else
             {
                 LogError($"{savePath}元数据更新失败, 原文件未改动");
-                // ffmpeg 的 stderr 已由 RunExe 转发到控制台, 这里补上常见原因, 免得只剩一句泛泛报错。
+                // ffmpeg 的输出已由 RunExe 收进调试缓冲(失败时随补打输出), 这里补上常见原因, 免得只剩一句泛泛报错。
                 LogError("常见原因: ffmpeg 不在 PATH 或版本过旧、原文件损坏/不完整; 加 --debug 可查看完整 ffmpeg 命令");
                 outcome = DownloadPageOutcome.Failed;
             }
@@ -1259,7 +1265,7 @@ partial class Program
             Console.BackgroundColor = ConsoleColor.Red;
             Console.ForegroundColor = ConsoleColor.White;
             var msg = Config.DEBUG_LOG ? e.ToString() : DescribeFailure(e);
-            Console.Write($"{msg}{Environment.NewLine}{DescribeFailureHint(e)}");
+            Console.Write($"{msg}{Environment.NewLine}{DescribeFailureHint(e)}{DescribeDebugContext(e)}");
             Console.ResetColor();
             Console.WriteLine();
             Thread.Sleep(1);
@@ -1275,7 +1281,8 @@ partial class Program
         WithRootCause(e.Message, e, Environment.NewLine + "根因: ");
 
     /// <summary>
-    /// 顶层失败提示。aria2c 相关失败给出 --no-aria2 这类可执行建议, 其余给出可定位问题的 --debug 线索。
+    /// 顶层失败提示。aria2c / 网络抖动这类可判定的失败给出可执行建议; 判不出原因时返回空串,
+    /// 交给 <see cref="DescribeDebugContext"/> 补上调试线索。
     /// </summary>
     internal static string DescribeFailureHint(Exception e)
     {
@@ -1292,7 +1299,40 @@ partial class Program
         {
             return "本机网络或 DNS 暂时无法解析 bilibili/CDN 域名(断网、代理出口或 DNS 抖动的典型表现)。已下载分片会保留, 网络恢复后用同一条命令重跑即可续传!";
         }
-        return "仅凭以上信息通常无法定位问题: 请加 --debug 重跑, 完整堆栈与接口原始响应会一并打印到屏幕上, 反馈问题时请直接粘贴整段输出!";
+        return "";
+    }
+
+    /// <summary>
+    /// 判不出原因时的兜底输出: 优先补打出事阶段的调试信息——分P汇总失败会自带各失败分P的段落,
+    /// 否则用缓冲里当前阶段的行(非 --debug 时这些行都没上屏), 缓冲为空才提示用 --debug 重跑。
+    /// --debug 下日志本就在屏上, 不重复输出。
+    /// </summary>
+    internal static string DescribeDebugContext(Exception e)
+    {
+        if (Config.DEBUG_LOG) return "";
+        var stageSections = FindStageDebugSections(e);
+        var recent = stageSections.Count > 0
+            ? string.Join(Environment.NewLine, stageSections)
+            : DrainRecentDebugLines();
+        if (recent.Length == 0)
+        {
+            return "仅凭以上信息通常无法定位问题: 请加 --debug 重跑, 完整堆栈与接口原始响应会一并打印到屏幕上, 反馈问题时请直接粘贴整段输出!";
+        }
+        return $"{Environment.NewLine}---- 出错前最近的调试信息(加 --debug 可得到完整日志) ----{Environment.NewLine}{recent}{Environment.NewLine}---- 调试信息结束 ----";
+    }
+
+    private static List<string> FindStageDebugSections(Exception e)
+    {
+        var depth = 0;
+        for (Exception? ex = e; ex is not null && depth < 16; ex = ex.InnerException)
+        {
+            depth++;
+            if (ex is PageFailuresException failures && failures.StageDebugSections.Count > 0)
+            {
+                return [.. failures.StageDebugSections];
+            }
+        }
+        return [];
     }
 
     internal static List<Video> SortTracks(List<Video> videoTracks, Dictionary<string, int> dfnPriority, Dictionary<string, byte> encodingPriority, bool videoAscending, bool encodingPriorityFirst)

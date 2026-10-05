@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using BBDownT.Core;
 using BBDownT.Core.Entity;
 
 namespace BBDownT;
@@ -13,6 +14,8 @@ partial class Program
     {
         var validationError = SpaceBatchDownload.ValidateOptions(option);
         if (validationError is not null) throw new ArgumentException(validationError);
+        // 阶段边界: 失败补打只覆盖当前视频/任务, 不带入上一个任务的调试信息
+        Logger.ClearRecentDebugLines();
         var prepared = await (prepare ?? PrepareVideoAsync)(option);
         var info = prepared.Info;
         if (relatedTask is not null && !batchEntry)

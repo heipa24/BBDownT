@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using BBDownT.Core;
 using static BBDownT.Core.Entity.Entity;
 
 namespace BBDownT;
@@ -26,6 +27,7 @@ internal sealed class PageDownloadRunner(
             .Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet()
             ?? new HashSet<string>();
         var failedPages = new List<string>();
+        var failedDebugSections = new List<string>();
         foreach (var page in pages)
         {
             // Preserve the existing wait before every selected page, including
@@ -55,12 +57,14 @@ internal sealed class PageDownloadRunner(
                 // 单个分P失败(如需会员、CDN 持续不可用)不该牵连后面的分P: 记录后继续, 失败分P不写归档。
                 log($"P{page.index} 下载失败: {ex.Message}");
                 failedPages.Add($"P{page.index}");
+                failedDebugSections.Add(FormatStageDebugLines(page.index, Logger.DrainRecentDebugLines()));
                 continue;
             }
             if (!outcome.IsSuccessful())
             {
                 log($"P{page.index} 下载失败");
                 failedPages.Add($"P{page.index}");
+                failedDebugSections.Add(FormatStageDebugLines(page.index, Logger.DrainRecentDebugLines()));
                 continue;
             }
 
@@ -70,8 +74,23 @@ internal sealed class PageDownloadRunner(
 
         // 仍要让调用方(与退出码)知道有分P没跑完, 批量任务不会把部分失败当成功。
         if (failedPages.Count > 0)
-            throw new InvalidOperationException($"共{failedPages.Count}个分P下载失败: {string.Join(", ", failedPages)}");
+            throw new PageFailuresException(
+                $"共{failedPages.Count}个分P下载失败: {string.Join(", ", failedPages)}",
+                failedDebugSections.Where(section => section.Length > 0).ToList());
 
         log("任务完成");
     }
+
+    private static string FormatStageDebugLines(int pageIndex, string debugLines) =>
+        debugLines.Length == 0 ? "" : $"P{pageIndex} 的调试信息:{Environment.NewLine}{debugLines}";
+}
+
+/// <summary>
+/// 分P汇总失败。顺带带上各失败分P出事前的调试信息, 顶层补打时才不会错打成缓冲区里最后活动的行
+/// (多P场景下最后跑完的往往是成功的分P)。
+/// </summary>
+internal sealed class PageFailuresException(string message, IReadOnlyList<string> stageDebugSections)
+    : InvalidOperationException(message)
+{
+    internal IReadOnlyList<string> StageDebugSections { get; } = stageDebugSections;
 }

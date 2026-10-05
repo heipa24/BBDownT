@@ -68,13 +68,4 @@ public class DanmakuXmlValidationTests
 
         Assert.Contains("--no-aria2", Program.DescribeFailureHint(error));
     }
-
-    [Fact]
-    public void DescribeFailureHint_PointsAtDebugOutputForOtherErrors()
-    {
-        var hint = Program.DescribeFailureHint(new InvalidOperationException("boom"));
-
-        Assert.Contains("--debug", hint);
-        Assert.DoesNotContain(".json", hint);
-    }
 }

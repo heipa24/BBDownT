@@ -1,3 +1,4 @@
+using BBDownT.Core;
 using static BBDownT.Core.Entity.Entity;
 
 namespace BBDownT.Tests;
@@ -145,7 +146,7 @@ public class PageDownloadRunnerTests
         var runner = new PageDownloadRunner(_ => false, _ => { },
             _ => Task.CompletedTask, events.Add);
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(Pages(2), true, 0, page =>
+        var error = await Assert.ThrowsAsync<PageFailuresException>(() => runner.RunAsync(Pages(2), true, 0, page =>
         {
             events.Add("download:" + page.cid);
             return Task.FromResult(page.index == 1 ? DownloadPageOutcome.Failed : DownloadPageOutcome.Completed);
@@ -167,7 +168,7 @@ public class PageDownloadRunnerTests
         var downloaded = new List<string>();
         var runner = new PageDownloadRunner(_ => false, _ => { }, _ => Task.CompletedTask, _ => { });
 
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(Pages(2), true, 0, page =>
+        var error = await Assert.ThrowsAsync<PageFailuresException>(() => runner.RunAsync(Pages(2), true, 0, page =>
         {
             if (page.index == 1) return Task.FromException<DownloadPageOutcome>(new IOException("页面下载异常"));
             downloaded.Add(page.cid);
@@ -185,7 +186,7 @@ public class PageDownloadRunnerTests
         var runner = new PageDownloadRunner(archive.Contains, key => archive.Add(key),
             _ => Task.CompletedTask, _ => { });
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => runner.RunAsync(Pages(2), true, 0, page =>
+        await Assert.ThrowsAsync<PageFailuresException>(() => runner.RunAsync(Pages(2), true, 0, page =>
             Task.FromResult(page.index == 1 ? DownloadPageOutcome.Failed : DownloadPageOutcome.Completed)));
 
         Assert.Equal(new[] { "10:2" }, archive);
@@ -221,6 +222,23 @@ public class PageDownloadRunnerTests
         await runner.RunAsync([], true, 10, _ => throw new Exception("No page downloads"));
 
         Assert.Equal(new[] { "任务完成" }, logs);
+    }
+
+    [Fact]
+    public async Task FailedPageCarriesItsStageDebugLinesForTheTopLevelReport()
+    {
+        Logger.ClearRecentDebugLines();
+        var runner = new PageDownloadRunner(_ => false, _ => { }, _ => Task.CompletedTask, _ => { });
+
+        var error = await Assert.ThrowsAsync<PageFailuresException>(() => runner.RunAsync(Pages(1), true, 0, _ =>
+        {
+            Logger.LogDebug("Response: {0}", "{\"code\":-404,\"message\":\"啥都木有\"}");
+            return Task.FromResult(DownloadPageOutcome.Failed);
+        }));
+
+        var section = Assert.Single(error.StageDebugSections);
+        Assert.Contains("P1 的调试信息", section);
+        Assert.Contains("{\"code\":-404,\"message\":\"啥都木有\"}", section);
     }
 
     private static List<Page> Pages(int count) => Enumerable.Range(1, count)

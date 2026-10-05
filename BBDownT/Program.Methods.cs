@@ -384,6 +384,8 @@ internal partial class Program
             webCookieFilePath = Path.Combine(APP_DIR, "BBDownT.data");
             LogDebug("文件路径：{0}", webCookieFilePath);
             Config.COOKIE = File.ReadAllText(webCookieFilePath);
+            // 步骤边界: 加载完成后丢弃本步骤的调试信息, 失败补打只看得到正在进行的步骤
+            ClearRecentDebugLines();
         }
         if (string.IsNullOrEmpty(Config.TOKEN) && File.Exists(Path.Combine(APP_DIR, "BBDownTTV.data")) && myOption.UseTvApi)
         {
@@ -391,6 +393,7 @@ internal partial class Program
             LogDebug("文件路径：{0}", Path.Combine(APP_DIR, "BBDownTTV.data"));
             Config.TOKEN = File.ReadAllText(Path.Combine(APP_DIR, "BBDownTTV.data"));
             Config.TOKEN = Config.TOKEN.Replace("access_token=", "");
+            ClearRecentDebugLines();
         }
         if (string.IsNullOrEmpty(Config.TOKEN) && File.Exists(Path.Combine(APP_DIR, "BBDownTApp.data")) && myOption.UseAppApi)
         {
@@ -398,6 +401,7 @@ internal partial class Program
             LogDebug("文件路径：{0}", Path.Combine(APP_DIR, "BBDownTApp.data"));
             Config.TOKEN = File.ReadAllText(Path.Combine(APP_DIR, "BBDownTApp.data"));
             Config.TOKEN = Config.TOKEN.Replace("access_token=", "");
+            ClearRecentDebugLines();
         }
 
         if (!string.IsNullOrEmpty(Config.COOKIE))

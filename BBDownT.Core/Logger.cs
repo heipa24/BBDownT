@@ -73,18 +73,57 @@ public static class Logger
 
     public static void LogDebug(string toFormat, params object[] args)
     {
-        if (Config.DEBUG_LOG)
+        string message;
+        if (args.Length > 0)
+            message = string.Format(toFormat, args).Trim();
+        else
+            message = toFormat;
+
+        var line = DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss.fff]") + " - " + RedactSensitiveText(message);
+        RememberDebugLine(line);
+        if (!Config.DEBUG_LOG) return;
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.Write(line);
+        Console.ResetColor();
+        Console.WriteLine();
+    }
+
+    private static readonly List<string> RecentDebugLines = [];
+    private static readonly object RecentDebugLock = new();
+
+    /// <summary>
+    /// 取走并清空缓冲的近期调试信息。非 --debug 时这些行不上屏, 出错时补打出来,
+    /// 免得使用者只能看到一句异常消息。取走后清空, 避免同一批日志被重复补打。
+    /// </summary>
+    public static string DrainRecentDebugLines()
+    {
+        lock (RecentDebugLock)
         {
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write(DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss.fff]") + " - ");
-            string message;
-            if (args.Length > 0)
-                message = string.Format(toFormat, args).Trim();
-            else
-                message = toFormat;
-            Console.Write(RedactSensitiveText(message));
-            Console.ResetColor();
-            Console.WriteLine();
+            if (RecentDebugLines.Count == 0) return "";
+            var text = string.Join(Environment.NewLine, RecentDebugLines);
+            RecentDebugLines.Clear();
+            return text;
+        }
+    }
+
+    /// <summary>
+    /// 丢弃缓冲。进入新阶段/某个步骤完成时调用, 使失败补打只覆盖出事的那个步骤。
+    /// </summary>
+    public static void ClearRecentDebugLines()
+    {
+        lock (RecentDebugLock)
+        {
+            RecentDebugLines.Clear();
+        }
+    }
+
+    // 不设上限: 每个步骤完成都会清一次, 单步输出不会累积成长尾; 一旦真的出现超长单步,
+    // 保留全部行也比截断到看不出问题更有用。--debug 下这些行本就在屏上, 缓冲只是副本。
+    private static void RememberDebugLine(string line)
+    {
+        lock (RecentDebugLock)
+        {
+            RecentDebugLines.Add(line);
         }
     }
 }
