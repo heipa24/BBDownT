@@ -43,9 +43,12 @@ internal static class BBDownTConfigParser
                         }
                     );
                 var configArgsArray = configArgs.ToArray();
+                // global option 不进 rootCommand.Options，必须并入 CommandLineInvoker.OptionAliases，
+                // 否则配置文件里的 -dd/-p 等会被误判成无法识别的配置项。
                 var knownAliases = rootCommand.Options
                     .Concat(rootCommand.Children.OfType<Command>().SelectMany(command => command.Options))
                     .SelectMany(option => option.Aliases)
+                    .Concat(CommandLineInvoker.OptionAliases)
                     .ToHashSet(StringComparer.Ordinal);
                 var unknownOptions = normalizedConfigLines
                     .Where(IsOptionDeclaration)

@@ -186,6 +186,9 @@ partial class Program
             context.ParseResult.GetValueForOption(cookieAllowedDomainsOpt),
             context.ParseResult.GetValueForOption(maxGrpcMessageMbOpt)));
         rootCommand.AddCommand(runAsServerCommand);
+        rootCommand.AddCommand(CommandLineInvoker.GetUpdateDownloadedCommand(
+            (option, dir) => RunWithFailureReportingAsync(
+                () => UpdateDownloaded.RunAsync(option, dir, child => ExecuteWorkAsync(child)))));
         rootCommand.Description = "BBDownT是一个免费且便捷高效的哔哩哔哩下载/解析软件.";
         rootCommand.TreatUnmatchedTokensAsErrors = true;
 
@@ -276,13 +279,16 @@ partial class Program
             return 1;
         }
 
-        if (commandLineResult.CommandResult.Command.Name.ToLower() != Path.GetFileNameWithoutExtension(Environment.ProcessPath)!.ToLower() && Path.GetFileNameWithoutExtension(Environment.ProcessPath)!.ToLower() != "dotnet")
+        // 用身份比较而不是拿 ProcessPath 对名字: 以 `dotnet BBDownT.dll ...` 宿主运行时,
+        // 名字比较会把子命令误判成根命令, 追更的位置参数会被当成视频地址。
+        if (commandLineResult.CommandResult.Command != rootCommand)
         {
-            // 服务器模式需要完整的arg列表
-            if (commandLineResult.CommandResult.Command.Name.ToLower() == "serve")
+            // 服务器模式与追更子命令复用全部 global option, 需要完整的arg列表
+            if (commandLineResult.CommandResult.Command.Name.ToLower() is "serve" or "update-downloaded")
             {
+                var subcommandName = commandLineResult.CommandResult.Command.Name.ToLower();
                 newArgsList.AddRange(args);
-                if (!BBDownTConfigParser.HandleConfig(newArgsList, rootCommand, "serve"))
+                if (!BBDownTConfigParser.HandleConfig(newArgsList, rootCommand, subcommandName))
                 {
                     return 1;
                 }
@@ -653,8 +659,11 @@ partial class Program
         string? firstEncoding, bool downloadDanmaku, BBDownTDanmakuFormat[] downloadDanmakuFormats, string input, string savePathFormat, string lang, string aidOri, int delay, string apiType, DownloadTask? relatedTask = null)
     {
         // Compose legacy side effects here; the runner only owns page scheduling.
-        List<string>? selectedPages = GetSelectedPages(myOption, vInfo, input);
+        List<string>? selectedPages = myOption.UpdateRecordedPages is { Count: > 0 } recorded
+            ? RetainRecordedPages(vInfo, recorded)
+            : GetSelectedPages(myOption, vInfo, input);
         Log($"共计 {vInfo.PagesInfo.Count} 个分P, 已选择：" + (selectedPages == null ? "ALL" : string.Join(",", selectedPages)));
+        var markers = BuildBbdownMarkers(myOption, downloadDanmaku, downloadDanmakuFormats);
 
         var plan = PageDownloadPlan.Create(
             vInfo, myOption, selectedPages, SinglePageDefaultSavePath, MultiPageDefaultSavePath);
@@ -667,12 +676,12 @@ partial class Program
             Log("已选择配音版本，不读写默认配音的下载归档；常规混流模式按带语言后缀的输出文件检查是否已下载。");
         await runner.RunAsync(plan.Pages, useAidArchive, delay,
             page => DownloadPageAsync(page, myOption, vInfo, plan.Pages, encodingPriority, dfnPriority, firstEncoding,
-                downloadDanmaku, downloadDanmakuFormats, input, plan.SavePathFormat, lang, aidOri, apiType, relatedTask),
+                downloadDanmaku, downloadDanmakuFormats, input, plan.SavePathFormat, lang, aidOri, apiType, markers, relatedTask),
             vInfo.PagesInfo);
     }
 
     private static async Task<DownloadPageOutcome> DownloadPageAsync(Page p, MyOption myOption, VInfo vInfo, List<Page> selectedPagesInfo, Dictionary<string, byte> encodingPriority, Dictionary<string, int> dfnPriority,
-        string? firstEncoding, bool downloadDanmaku, BBDownTDanmakuFormat[] downloadDanmakuFormats, string input, string savePathFormat, string lang, string aidOri, string apiType, DownloadTask? relatedTask = null)
+        string? firstEncoding, bool downloadDanmaku, BBDownTDanmakuFormat[] downloadDanmakuFormats, string input, string savePathFormat, string lang, string aidOri, string apiType, BbdownMarkers markers, DownloadTask? relatedTask = null)
     {
         string desc = string.IsNullOrEmpty(p.desc) ? vInfo.Desc : p.desc;
         bool bangumi = vInfo.IsBangumi;
@@ -909,7 +918,7 @@ partial class Program
 
                     if (myOption.DanmakuOnly)
                     {
-                        WriteBbdownMetadata(savePath, input, title, p.index);
+                        WriteBbdownMetadata(savePath, input, title, p.index, markers);
                         DeleteEmptyDownloadDirectory(p.aid);
                         return DownloadPageOutcome.ExclusiveArtifact;
                     }
@@ -953,7 +962,7 @@ partial class Program
                 {
                     return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "", episodeId,
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
-                        input, p.index, p.aid, relatedTask);
+                        input, p.index, p.aid, markers, relatedTask);
                 }
 
                 if (StopPreviewMediaDownload(parsedResult)) return DownloadPageOutcome.Failed;
@@ -1074,7 +1083,7 @@ partial class Program
                     return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "",
                         (pagesCount > 1 || (bangumi && !vInfo.IsBangumiEnd)) ? p.title : "",
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
-                        input, p.index, p.aid, relatedTask);
+                        input, p.index, p.aid, markers, relatedTask);
                 }
                 if (StopPreviewMediaDownload(parsedResult)) return DownloadPageOutcome.Failed;
                 var pad = string.Empty.PadRight(clips.Count.ToString().Length, '0');
@@ -1131,7 +1140,7 @@ partial class Program
             }
 
             if (!string.IsNullOrWhiteSpace(savePath)) {
-                WriteBbdownMetadata(savePath, input, title, p.index);
+                WriteBbdownMetadata(savePath, input, title, p.index, markers);
                 relatedTask?.AddSavePath(savePath);
             }
             return DownloadPageOutcome.Completed;
@@ -1316,7 +1325,7 @@ partial class Program
     private static DownloadPageOutcome HandleExistingOutput(
         MyOption myOption, string savePath, string desc, string title, string author, string episodeId,
         string coverPath, string lang, List<Subtitle> subtitleInfo, List<ViewPoint>? points, long pubTime,
-        string input, int pageIndex, string aid, DownloadTask? relatedTask)
+        string input, int pageIndex, string aid, BbdownMarkers markers, DownloadTask? relatedTask)
     {
         var outcome = DownloadPageOutcome.AlreadyExists;
         if (ShouldRefreshExistingMetadata(myOption, savePath))
@@ -1342,7 +1351,7 @@ partial class Program
         if (outcome.IsSuccessful())
         {
             relatedTask?.AddSavePath(savePath);
-            WriteBbdownMetadata(savePath, input, title, pageIndex);
+            WriteBbdownMetadata(savePath, input, title, pageIndex, markers);
         }
         // coverPath 在未下载封面时为空串, 直接 Delete 会抛异常
         if (!string.IsNullOrEmpty(coverPath)) File.Delete(coverPath);
@@ -1389,11 +1398,17 @@ partial class Program
     }
 
 
-    private static async Task DoWorkAsync(MyOption myOption)
+    private static async Task DoWorkAsync(MyOption myOption) =>
+        await RunWithFailureReportingAsync(() => ExecuteWorkAsync(myOption));
+
+    /// <summary>
+    /// 统一的任务失败展示: 根命令下载与追更子命令共用, 保证两条入口都打印根因并按 1 退出。
+    /// </summary>
+    internal static async Task RunWithFailureReportingAsync(Func<Task> work)
     {
         try
         {
-            await ExecuteWorkAsync(myOption);
+            await work();
         }
         catch (Exception e)
         {

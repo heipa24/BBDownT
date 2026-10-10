@@ -1,4 +1,6 @@
-﻿namespace BBDownT;
+﻿using System.Collections.Generic;
+
+namespace BBDownT;
 
 internal class MyOption
 {
@@ -43,6 +45,10 @@ internal class MyOption
     public string MultiFilePattern { get; set; } = "";
     public string SelectPage { get; set; } = "";
     internal bool SelectPageSpecified { get; set; }
+    /// <summary>
+    /// 追更独占模式下只处理 bbdown.json 已记载的这些分P；不来自命令行，故 internal 不进 API JSON。
+    /// </summary>
+    internal List<int>? UpdateRecordedPages { get; set; }
     public string Language { get; set; } = "";
     public string? AudioLanguage { get; set; }
     public string UserAgent { get; set; } = "";
@@ -79,6 +85,8 @@ internal class MyOption
         copy.Url = url;
         copy.DownloadAll = false;
         copy.WorkDir = workDir;
+        // 追更的单次限制不随批量复制扩散
+        copy.UpdateRecordedPages = null;
         // SetUpWork has already normalized these legacy switches on the parent.
         // Replaying them would append filename suffixes or proxy arguments again.
         copy.AddDfnSubfix = false;

@@ -25,10 +25,31 @@ internal partial class Program
     private static readonly object BbdownMetadataLock = new();
 
     /// <summary>
-    /// 写出/合并 bbdown.json 元数据(来源链接 + 分P文件映射)到输出文件所在目录, 供后续更新脚本定位来源。
+    /// 本次下载的方式标记, 供 update-downloaded 追更时复原当初的参数。
+    /// 两者都为 null 表示本次没有可记录的用法, 不覆盖已写入的历史标记。
+    /// </summary>
+    internal readonly record struct BbdownMarkers(string? SelectPage, string? DanmakuFormats);
+
+    /// <summary>
+    /// 组装本次下载的用法标记：只有显式给了 -p、且真的下了弹幕时才记录，缺省保留目录里已有的值。
+    /// </summary>
+    internal static BbdownMarkers BuildBbdownMarkers(MyOption myOption, bool downloadDanmaku, BBDownTDanmakuFormat[] formats) => new(
+        myOption.SelectPageSpecified ? myOption.SelectPage : null,
+        downloadDanmaku ? string.Join(',', formats.Select(f => f.ToString().ToLower())) : null);
+
+    /// <summary>
+    /// selectPage 的 ALL 是"这套内容当初按全集下载"的追更凭证，一旦被记下就不该因为某次 -p 3 的单集重跑而降级；
+    /// 反过来，把窄范围记成 ALL 才是需要修正的方向。
+    /// </summary>
+    internal static bool ShouldRecordSelectPage(string? recorded, string? incoming) =>
+        !string.IsNullOrWhiteSpace(incoming)
+        && (UpdateDownloaded.IsAllPages(incoming) || !UpdateDownloaded.IsAllPages(recorded));
+
+    /// <summary>
+    /// 写出/合并 bbdown.json 元数据(来源链接 + 分P文件映射 + 下载用法标记)到输出文件所在目录, 供后续更新脚本定位来源。
     /// 尽力而为: 任何异常静默吞掉, 绝不影响下载主流程。
     /// </summary>
-    private static void WriteBbdownMetadata(string savePath, string sourceId, string title, int page)
+    internal static void WriteBbdownMetadata(string savePath, string sourceId, string title, int page, BbdownMarkers markers)
     {
         try
         {
@@ -65,6 +86,11 @@ internal partial class Program
                 }
                 if (!string.IsNullOrWhiteSpace(title)) root["title"] = title;
                 root["updatedAt"] = DateTimeOffset.Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz");
+                // 只在本次确实用了 -p / -dd 时记录, 缺省保留旧值: 一次不带 -dd 的重跑不该把弹幕标记洗掉
+                if (!string.IsNullOrWhiteSpace(markers.DanmakuFormats)) root["danmakuFormats"] = markers.DanmakuFormats;
+                // 单独补下某一集(-p 5)不该把"这套是按全集下载的"抹掉, 否则该目录下次不会自动追更
+                var recordedPage = root["selectPage"] is JsonValue pageNode && pageNode.TryGetValue<string>(out var pageText) ? pageText : null;
+                if (ShouldRecordSelectPage(recordedPage, markers.SelectPage)) root["selectPage"] = markers.SelectPage;
 
                 var pages = root["pages"] as JsonArray ?? new JsonArray();
                 var entry = new JsonObject { ["page"] = page, ["file"] = Path.GetFileName(savePath) };
@@ -105,7 +131,7 @@ internal partial class Program
     /// 兼容旧版本命令行参数并给出警告
     /// </summary>
     /// <param name="myOption"></param>
-    private static void HandleDeprecatedOptions(MyOption myOption)
+    internal static void HandleDeprecatedOptions(MyOption myOption)
     {
         if (myOption.AddDfnSubfix)
         {
@@ -475,6 +501,19 @@ internal partial class Program
         }
 
         return selectedPages;
+    }
+
+    /// <summary>
+    /// 追更的独占刷新模式只处理 bbdown.json 记载过的分P。记载的集号可能已经不存在
+    /// (撤集、SS 重新映射到别的季、目录改名)，因此与当前分P取交集、越界项只告警丢弃，
+    /// 不能交给 PageSelectionParser —— 它对越界集号直接抛异常。
+    /// </summary>
+    internal static List<string> RetainRecordedPages(VInfo vInfo, IReadOnlyList<int> recorded)
+    {
+        var available = vInfo.PagesInfo.Select(page => page.index).ToHashSet();
+        var dropped = recorded.Where(index => !available.Contains(index)).ToArray();
+        if (dropped.Length > 0) LogWarn($"追更跳过接口已不存在的分P: {string.Join(',', dropped)}");
+        return recorded.Where(index => available.Contains(index)).Select(index => index.ToString()).Distinct().ToList();
     }
 
     /// <summary>

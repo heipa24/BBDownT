@@ -135,99 +135,100 @@ Arguments:
   <url>  视频地址 或 av|bv|BV|ep|ss
 
 Options:
-  -tv, --use-tv-api                              使用TV端解析模式
-  -app, --use-app-api                            使用APP端解析模式
-  -intl, --use-intl-api                          使用国际版(东南亚视频)解析模式
-  --use-mp4box                                   使用MP4Box来混流
-  -e, --encoding-priority <encoding-priority>    视频及音频编码的选择优先级, 用逗号分割 例: "hevc,av1,avc,flac,eac3,m4a"；与 -q 同时使用时越靠前越优先
-  -q, --dfn-priority <dfn-priority>              画质优先级,用逗号分隔 例: "8K 超高清, 1080P 高码率, HDR 真彩, 杜比视界"；与 -e 同时使用时越靠前越优先
-  -info, --only-show-info                        仅解析音视频和字幕信息，不下载；配合 --sub-only 仅列出字幕
-  --show-all                                     展示所有分P标题
-  -aria2, --use-aria2c                           调用aria2c进行下载(默认使用内置下载器, 需显式传入本参数才会启用aria2)
-  --no-aria2                                     强制使用内置下载器(当前版本默认即为内置下载器, 保留该参数用于兼容旧命令)
-  -ia, --interactive                             交互式选择音视频和字幕；字幕支持多选
-  -hs, --hide-streams                            不要显示所有可用音视频流
-  -mt, --multi-thread                            使用多线程下载(默认开启)
-  --video-only                                   仅下载视频；与 --audio-only 同时使用时下载两条独立主流并跳过混流，源不支持时失败
-  --audio-only                                   仅下载音频；与 --video-only 同时使用时下载两条独立主流并跳过混流，源不支持时失败
-  --danmaku-only                                 仅下载弹幕
-  --sub-only                                     仅下载字幕
-  --cover-only                                   仅下载封面
-  --debug                                        输出调试日志
-  --skip-mux                                     跳过混流步骤
-  --simply-mux                                   精简混流，不增加描述、作者等信息
-  --skip-subtitle                                跳过字幕下载
-  --skip-cover                                   跳过封面下载
-  --metadata-only                                输出文件已存在时仅更新其元数据(标题/描述/封面/章节/字幕)，不重新下载或重编码音视频流；会保留原文件已有的音频语言/字幕标题等标签，接口只返回试看片段时先校验原文件为完整正片再刷新(需要 ffprobe)
-  --force-http                                   下载音视频时强制使用HTTP协议替换HTTPS(默认开启)
-  -dd, --download-danmaku                        下载弹幕
-  -ddf, --download-danmaku-formats <formats>     指定需下载的弹幕格式, 用逗号分隔, 可选 xml/ass, 默认: "xml,ass"
-  --skip-ai                                      跳过AI字幕下载(默认开启)
-  --subtitle-language <codes>                    筛选字幕语言，逗号分隔；zh/en 匹配语言族，zh-Hans/ai-zh 精确匹配
-  --ai-subtitle-policy <policy>                  exclude/include/prefer-human/only；显式指定时优先于 --skip-ai
-  --video-ascending                              视频升序(最小体积优先)
-  --audio-ascending                              音频升序(最小体积优先)
-  --allow-pcdn                                   不替换PCDN域名, 仅在正常情况与--upos-host均无法下载时使用
-  -F, --file-pattern <file-pattern>              使用内置变量自定义单P存储文件名:
+  -tv, --use-tv-api                                            使用TV端解析模式
+  -app, --use-app-api                                          使用APP端解析模式
+  -intl, --use-intl-api                                        使用国际版(东南亚视频)解析模式
+  --use-mp4box                                                 使用MP4Box来混流
+  -e, --encoding-priority <encoding-priority>                  视频及音频编码的选择优先级, 用逗号分割 例: "hevc,av1,avc,flac,eac3,m4a"；与 -q 同时使用时越靠前越优先
+  -q, --dfn-priority <dfn-priority>                            画质优先级,用逗号分隔 例: "8K 超高清, 1080P 高码率, HDR 真彩, 杜比视界"；与 -e 同时使用时越靠前越优先
+  -info, --only-show-info                                      仅解析音视频和字幕信息，不下载；配合 --sub-only 仅列出字幕
+  --show-all                                                   展示所有分P标题
+  -aria2, --use-aria2c                                         调用aria2c进行下载(默认使用内置下载器, 需显式传入本参数才会启用aria2)
+  --no-aria2                                                   强制使用内置下载器(当前版本默认即为内置下载器, 保留该参数用于兼容旧命令)
+  -ia, --interactive                                           交互式选择音视频和字幕；字幕支持多选
+  -hs, --hide-streams                                          不要显示所有可用音视频流
+  -mt, --multi-thread                                          使用多线程下载(默认开启)
+  --simply-mux                                                 精简混流，不增加描述、作者等信息
+  --video-only                                                 仅下载视频；与 --audio-only 同时使用时下载两条独立主流并跳过混流，源不支持时失败
+  --audio-only                                                 仅下载音频；与 --video-only 同时使用时下载两条独立主流并跳过混流，源不支持时失败
+  --danmaku-only                                               仅下载弹幕
+  --sub-only                                                   仅下载字幕
+  --cover-only                                                 仅下载封面
+  --debug                                                      输出调试日志
+  --skip-mux                                                   跳过混流步骤
+  --skip-subtitle                                              跳过字幕下载
+  --skip-cover                                                 跳过封面下载
+  --metadata-only                                              输出文件已存在时仅更新其元数据(标题/描述/封面/章节/字幕)，不重新下载或重编码音视频流；会保留原文件已有的音频语言/字幕标题等标签，接口只返回试看片段时先校验原文件为完整正片再刷新(需要 ffprobe)
+  --force-http                                                 下载音视频时强制使用HTTP协议替换HTTPS(默认开启)
+  -dd, --download-danmaku                                      下载弹幕
+  -ddf, --download-danmaku-formats <download-danmaku-formats>  指定需下载的弹幕格式, 用逗号分隔, 可选 xml/ass, 默认: "xml,ass"
+  --skip-ai                                                    跳过AI字幕下载(默认开启)
+  --subtitle-language <subtitle-language>                      筛选字幕语言，逗号分隔；zh/en 匹配语言族，zh-Hans/ai-zh 精确匹配
+  --ai-subtitle-policy <ai-subtitle-policy>                    字幕AI策略: exclude/include/prefer-human/only；显式指定时优先于 --skip-ai
+  --video-ascending                                            视频升序(最小体积优先)
+  --audio-ascending                                            音频升序(最小体积优先)
+  --allow-pcdn                                                 不替换PCDN域名, 仅在正常情况与--upos-host均无法下载时使用
+  -F, --file-pattern <file-pattern>                            使用内置变量自定义单P存储文件名:
   
-                                                 <videoTitle>: 视频主标题
-                                                 <pageNumber>: 视频分P序号
-                                                 <pageNumberWithZero>: 视频分P序号(前缀补零)
-                                                 <pageTitle>: 视频分P标题
-                                                 <bvid>: 视频BV号
-                                                 <aid>: 视频aid
-                                                 <cid>: 视频cid
-                                                 <dfn>: 视频清晰度
-                                                 <res>: 视频分辨率
-                                                 <fps>: 视频帧率
-                                                 <videoCodecs>: 视频编码
-                                                 <videoBandwidth>: 视频码率
-                                                 <audioCodecs>: 音频编码
-                                                 <audioBandwidth>: 音频码率
-                                                 <ownerName>: 上传者名称
-                                                 <ownerMid>: 上传者mid
-                                                 <publishDate>: 收藏夹/番剧/合集发布时间
-                                                 <videoDate>: 视频发布时间(分p视频发布时间与<publishDate>相同)
-                                                 <apiType>: API类型(TV/APP/INTL/WEB)
+                                                               <videoTitle>: 视频主标题
+                                                               <pageNumber>: 视频分P序号
+                                                               <pageNumberWithZero>: 视频分P序号(前缀补零)
+                                                               <pageTitle>: 视频分P标题
+                                                               <bvid>: 视频BV号
+                                                               <aid>: 视频aid
+                                                               <cid>: 视频cid
+                                                               <dfn>: 视频清晰度
+                                                               <res>: 视频分辨率
+                                                               <fps>: 视频帧率
+                                                               <videoCodecs>: 视频编码
+                                                               <videoBandwidth>: 视频码率
+                                                               <audioCodecs>: 音频编码
+                                                               <audioBandwidth>: 音频码率
+                                                               <ownerName>: 上传者名称
+                                                               <ownerMid>: 上传者mid
+                                                               <publishDate>: 收藏夹/番剧/合集发布时间
+                                                               <videoDate>: 视频发布时间(分p视频发布时间与<publishDate>相同)
+                                                               <apiType>: API类型(TV/APP/INTL/WEB)
   
-                                                 默认为: <videoTitle>
-  -M, --multi-file-pattern <multi-file-pattern>  使用内置变量自定义多P存储文件名:
+                                                               默认为: <videoTitle>
+  -M, --multi-file-pattern <multi-file-pattern>                使用内置变量自定义多P存储文件名:
   
-                                                 默认为: <videoTitle>/[P<pageNumberWithZero>]<pageTitle>
-  -p, --select-page <select-page>                选择指定分p或分p范围: (-p 8 或 -p 1,2 或 -p 3-5 或 -p ALL 或 -p LAST 或 -p 3,5,LATEST)
-  --language <language>                          设置混流的音频语言(代码), 如chi, jpn等
-  --audio-language <code>                        选择 -info 列出的配音语言代码；WEB/DASH，输出文件附加语言后缀
-  -ua, --user-agent <user-agent>                 指定user-agent, 否则使用随机user-agent
-  -c, --cookie <cookie>                          设置字符串cookie用以下载网页接口的会员内容
-  -token, --access-token <access-token>          设置access_token用以下载TV/APP接口的会员内容
-  --aria2c-args <aria2c-args>                    调用aria2c的附加参数(默认包含"-x16 -s16 -j16 --min-split-size=1M"等, 使用时注意字符串转义)
-  --work-dir <work-dir>                          设置程序的工作目录
-  --ffmpeg-path <ffmpeg-path>                    设置ffmpeg的路径
-  --mp4box-path <mp4box-path>                    设置mp4box的路径
-  --aria2c-path <aria2c-path>                    设置aria2c的路径
-  --upos-host <upos-host>                        自定义upos服务器
-  --force-replace-host                           强制替换下载服务器host(默认开启)
-  --save-archives-to-file                        按视频和分P记录下载结果，用于后续跳过已完成的分P
-  --delay-per-page <delay-per-page>              设置下载合集分P之间的下载间隔时间(单位: 秒, 默认无间隔)
-  --download-all                                导出视频地址后下载UP主的全部投稿
-  --delay-per-video <delay-per-video>            设置批量下载视频之间的间隔时间(单位: 秒, 默认10秒)
-  --host <host>                                  指定BiliPlus host(使用BiliPlus需要access_token, 不需要cookie, 解析服务器能够获取你账号的大部分权限!)
-  --ep-host <ep-host>                            指定BiliPlus EP host(用于代理api.bilibili.com/pgc/view/web/season, 大部分解析服务器不支持代理该接口)
-  --tv-host <tv-host>                            自定义tv端接口请求Host(用于代理api.snm0516.aisee.tv)
-  --area <area>                                  (hk|tw|th) 使用BiliPlus时必选, 指定BiliPlus area
-  --config-file <config-file>                    读取指定的BBDownT本地配置文件(默认为: BBDownT.config)
-  --migrate                                      将程序目录中的旧版BBDown配置、登录文件和下载归档迁移为BBDownT文件
-  --api-token <api-token>                        服务器API鉴权Token，监听非本机地址且未配置时会自动生成
-  --version                                      Show version information
-  --update                                       使用本机 nupkg 重新打包并重装 dotnet tool；需单独使用
-  --set-update-source <set-update-source>        记录用于 --update 重装的 nupkg 源目录（含 BBDownT.*.nupkg）；需单独使用
-  -?, -h, --help                                 Show help and usage information
+                                                               默认为: <videoTitle>/[P<pageNumberWithZero>]<pageTitle>
+  -p, --select-page <select-page>                              选择指定分p或分p范围: (-p 8 或 -p 1,2 或 -p 3-5 或 -p ALL 或 -p LAST 或 -p 3,5,LATEST)
+  --language <language>                                        设置混流的音频语言(代码), 如chi, jpn等
+  --audio-language <audio-language>                            选择配音语言，精确匹配 -info 列出的代码；仅默认WEB/DASH模式，输出文件附加语言后缀
+  -ua, --user-agent <user-agent>                               指定user-agent；登录态默认使用持久化浏览器配置，匿名默认使用随机user-agent
+  -c, --cookie <cookie>                                        设置字符串cookie用以下载网页接口的会员内容
+  -token, --access-token <access-token>                        设置access_token用以下载TV/APP接口的会员内容
+  --aria2c-args <aria2c-args>                                  调用aria2c的附加参数(默认包含"-x16 -s16 -j16 --min-split-size=1M"等, 使用时注意字符串转义)
+  --work-dir <work-dir>                                        设置程序的工作目录
+  --ffmpeg-path <ffmpeg-path>                                  设置ffmpeg的路径
+  --mp4box-path <mp4box-path>                                  设置mp4box的路径
+  --aria2c-path <aria2c-path>                                  设置aria2c的路径
+  --upos-host <upos-host>                                      自定义upos服务器
+  --force-replace-host                                         强制替换下载服务器host(默认开启)
+  --save-archives-to-file                                      将下载过的视频记录到本地文件中, 用于后续跳过下载同个视频
+  --delay-per-page <delay-per-page>                            设置下载合集分P之间的下载间隔时间(单位: 秒, 默认无间隔)
+  --download-all                                               导出UP主空间TXT清单后，按清单逐条下载全部投稿
+  --delay-per-video <delay-per-video>                          批量下载时视频之间的间隔秒数，默认10，0为不等待
+  --host <host>                                                指定BiliPlus host(使用BiliPlus需要access_token, 不需要cookie, 解析服务器能够获取你账号的大部分权限!)
+  --ep-host <ep-host>                                          指定BiliPlus EP host(用于代理api.bilibili.com/pgc/view/web/season, 大部分解析服务器不支持代理该接口)
+  --tv-host <tv-host>                                          自定义tv端接口请求Host(用于代理api.snm0516.aisee.tv)
+  --area <area>                                                (hk|tw|th) 使用BiliPlus时必选, 指定BiliPlus area
+  --config-file <config-file>                                  读取指定的BBDownT本地配置文件(默认为: BBDownT.config)
+  --update                                                     使用本机 nupkg 重新打包并重装 dotnet tool；需单独使用
+  --set-update-source <set-update-source>                      记录用于 --update 重装的 nupkg 源目录（含 BBDownT.*.nupkg）；需单独使用
+  --migrate                                                    手动迁移程序目录中的旧版BBDown配置、登录文件和下载记录
+  --api-token <api-token>                                      服务器API鉴权Token，监听非本机地址且未配置时会自动生成
+  --version                                                    Show version information
+  -?, -h, --help                                               Show help and usage information
 
 
 Commands:
-  login    通过APP扫描二维码以登录您的WEB账号
-  logintv  通过APP扫描二维码以登录您的TV账号
-  serve    以服务器模式运行
+  login                        通过APP扫描二维码以登录您的WEB账号
+  logintv                      通过APP扫描二维码以登录您的TV账号
+  serve                        以服务器模式运行
+  ud, update-downloaded <dir>  按各目录 bbdown.json 记载的来源链接追更已下载番剧; 已下完的集会跳过下载, 只补新集并刷新弹幕/元数据
 ```
 
 # 功能
@@ -248,8 +249,9 @@ Commands:
 - [x] **支持8K/HDR/HDR Vivid/杜比视界/杜比全景声下载**
 - [x] 自定义存储文件名
 - [x] 自动刷新cookie
-- [x] 下载完成后在输出目录写出 `bbdown.json` 元数据(来源链接 + 分P文件映射)，供后续脚本定位来源
+- [x] 下载完成后在输出目录写出 `bbdown.json` 元数据(来源链接 + 分P文件映射 + 本次 `-p`/`-dd` 用法)，供后续脚本定位来源
 - [x] 已存在的成品文件可只刷新元数据(`--metadata-only`)，保留原文件编码与已有标签，接口只返回试看片段时校验后仍可刷新
+- [x] 已下载的番剧可批量追更(`update-downloaded`/`ud`)：按 `bbdown.json` 记录的来源补新集、刷弹幕，或只刷新已下载条目的元数据
 
 # TODO
 - [ ] 支持更多自定义选项
@@ -517,6 +519,43 @@ BBDownT --sub-only -ia --skip-ai false "https://www.bilibili.com/video/BV1qt4y1X
 接口只返回试看片段(付费内容 + 会员过期)时，元数据仍来自未被门控的番剧信息接口，因此可以继续刷新，但必须先确认已存在的文件是一集完整正片：文件存在且非空、其时长接近接口给出的整集时长(容差 `max(3s, 1%)`)。任一条件不满足就停止并说明原因，绝不把试看片段洗成"已下载完成"，也不写下载归档。文件名模板若含 `<dfn>`/`<res>`/`<fps>`/`<videoCodecs>`/`<videoBandwidth>`/`<audioCodecs>`/`<audioBandwidth>` 这些来自轨道的占位符，试看响应拼不出原来的文件名，同样会被拒绝。
 
 用 `--save-archives-to-file` 且该分P已记录在归档中时，程序会在分P调度阶段直接跳过整个分P，`--metadata-only` 不会执行；需要重刷元数据时请去掉该参数或清理对应归档行。
+
+</details>
+
+<details>
+<summary>追更已下载的番剧 (update-downloaded / ud)</summary>
+
+---
+
+下载时写出的 `bbdown.json` 现在还会记录本次用法：显式给了 `-p` 时记为 `selectPage`，开了 `-dd` 时把生效的弹幕格式记为 `danmakuFormats`。`update-downloaded`（短名 `ud`）就是靠这两个字段判断"这个目录当初是怎么下的、要不要顺带刷弹幕"，然后按记录的来源链接重跑一次下载。已下完的集会被既有的"输出文件已存在则跳过"逻辑跳过，因此一次追更只会补下新集。两个标记只增不清：`selectPage` 记成 `ALL` 之后，后来单独补下一集（`-p 3`）不会把它降级回窄范围，`danmakuFormats` 也不会因为某次没带 `-dd` 而消失。
+
+```
+# 追更仓库根下的所有番剧目录
+BBDownT ud "D:\Anime"
+
+# 只追更某一部: 直接把该番剧目录传进去（其下有 bbdown.json）
+BBDownT ud "D:\Anime\葬送的芙莉莲"
+
+# 只要新弹幕，不碰音视频
+BBDownT ud "D:\Anime" --danmaku-only
+
+# 只刷新已下载集的元数据（标题/简介/章节/字幕）
+BBDownT ud "D:\Anime" --metadata-only
+
+# 干跑: 只打印每个目录将执行什么，不落盘
+BBDownT ud "D:\Anime" --only-show-info
+```
+
+入选与刷新规则：
+
+- 目录入选需要 `bbdown.json` 记载的分P数量大于 1（旧版文件的证据）**或** `selectPage` 为 `ALL`。显式带上 `-p ALL` 时该筛选作废，所有含 `bbdown.json` 的目录都会被处理。
+- 弹幕刷新需要 `danmakuFormats` 存在（当初用了 `-dd`）**或** 每个分P都记载了 `xml`/`ass`（旧版文件的证据）。显式带上 `-dd` 时所有入选目录都会刷弹幕。当初带 `-dd` 下载的目录，追更时下的新集会自带弹幕。
+- 入选目录若标记为全集下载（或旧文件的分P数大于1），追更会自动按 `-p ALL` 执行以取到新集；显式传入的 `-p` 优先。
+- `--danmaku-only` 与 `--metadata-only` 是"只刷新已下载条目"的独占模式：只处理 `bbdown.json` 里已记载的那些分P，不会去取新集。`--sub-only`、`--cover-only`、`--video-only`、`--audio-only`、`--download-all`、`--interactive` 与 `ud` 同时使用会直接报错。
+
+执行位置由传入的目录决定，恒为"含 `bbdown.json` 的目录的父目录"：默认多P模板把成品写在 `视频标题\[P01]分P标题.mp4` 下，只有在这个父目录里执行才会命中既有成品并跳过。因此把番剧目录本身传给 `ud` 与把它的父目录传给 `ud` 是等价的，后者只是会顺带处理兄弟目录。标题在上游被改名时会另建新目录、重新下载，这是唯一一种追更会重下已完成内容的情形。
+
+逐目录串行执行，目录之间等待 `--delay-per-video`（默认 10 秒）；单个目录失败只记录并继续，结束时汇总"成功 n，失败 f"，有失败则以非零码退出。旧版 `bbdown.json` 在首次追更后会被自动补写上新字段。
 
 </details>
 

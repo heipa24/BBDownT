@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.CommandLine;
 using System.CommandLine.Binding;
 using System.CommandLine.Parsing;
@@ -104,162 +105,215 @@ internal static class CommandLineInvoker
     private static readonly Option<bool> BandwithAscending = new(["--bandwith-ascending"], "比特率升序(最小体积优先)") { IsHidden = true };
 
 
-    class MyOptionBinder : BinderBase<MyOption>
+    internal class MyOptionBinder : BinderBase<MyOption>
     {
-        protected override MyOption GetBoundValue(BindingContext bindingContext)
+        protected override MyOption GetBoundValue(BindingContext bindingContext) =>
+            Bind(bindingContext.ParseResult, bindingContext.ParseResult.GetValueForArgument(Url));
+
+        /// <summary>
+        /// 从解析结果装配 MyOption。子命令共用同一批 global option 实例，
+        /// 因此这里只依赖 ParseResult 与所属命令，位置参数由调用方给出（子命令没有 url）。
+        /// </summary>
+        internal static MyOption Bind(ParseResult parseResult, string url)
         {
             var option = new MyOption
             {
-                Url = bindingContext.ParseResult.GetValueForArgument(Url),
+                Url = url,
                 EncodingPriorityFirst = CommandLineOptionOrder.EncodingPrecedesQuality(
-                    bindingContext.ParseResult.Tokens.Select(token => token.Value))
+                    parseResult.Tokens.Select(token => token.Value))
             };
 
-            if (bindingContext.ParseResult.HasOption(UseTvApi)) option.UseTvApi = bindingContext.ParseResult.GetValueForOption(UseTvApi)!;
-            if (bindingContext.ParseResult.HasOption(UseAppApi)) option.UseAppApi = bindingContext.ParseResult.GetValueForOption(UseAppApi)!;
-            if (bindingContext.ParseResult.HasOption(UseIntlApi)) option.UseIntlApi = bindingContext.ParseResult.GetValueForOption(UseIntlApi)!;
-            if (bindingContext.ParseResult.HasOption(UseMP4box)) option.UseMP4box = bindingContext.ParseResult.GetValueForOption(UseMP4box)!;
-            if (bindingContext.ParseResult.HasOption(EncodingPriority)) option.EncodingPriority = bindingContext.ParseResult.GetValueForOption(EncodingPriority)!;
-            if (bindingContext.ParseResult.HasOption(DfnPriority)) option.DfnPriority = bindingContext.ParseResult.GetValueForOption(DfnPriority)!;
-            if (bindingContext.ParseResult.HasOption(OnlyShowInfo)) option.OnlyShowInfo = bindingContext.ParseResult.GetValueForOption(OnlyShowInfo)!;
-            if (bindingContext.ParseResult.HasOption(ShowAll)) option.ShowAll = bindingContext.ParseResult.GetValueForOption(ShowAll)!;
-            if (bindingContext.ParseResult.HasOption(UseAria2c)) option.UseAria2c = bindingContext.ParseResult.GetValueForOption(UseAria2c)!;
-            if (bindingContext.ParseResult.HasOption(NoAria2c)) option.NoAria2c = bindingContext.ParseResult.GetValueForOption(NoAria2c)!;
-            if (bindingContext.ParseResult.HasOption(Interactive)) option.Interactive = bindingContext.ParseResult.GetValueForOption(Interactive)!;
-            if (bindingContext.ParseResult.HasOption(HideStreams)) option.HideStreams = bindingContext.ParseResult.GetValueForOption(HideStreams)!;
-            if (bindingContext.ParseResult.HasOption(MultiThread)) option.MultiThread = bindingContext.ParseResult.GetValueForOption(MultiThread)!;
-            if (bindingContext.ParseResult.HasOption(SimplyMux)) option.SimplyMux = bindingContext.ParseResult.GetValueForOption(SimplyMux)!;
-            if (bindingContext.ParseResult.HasOption(VideoOnly)) option.VideoOnly = bindingContext.ParseResult.GetValueForOption(VideoOnly)!;
-            if (bindingContext.ParseResult.HasOption(AudioOnly)) option.AudioOnly = bindingContext.ParseResult.GetValueForOption(AudioOnly)!;
-            if (bindingContext.ParseResult.HasOption(DanmakuOnly)) option.DanmakuOnly = bindingContext.ParseResult.GetValueForOption(DanmakuOnly)!;
-            if (bindingContext.ParseResult.HasOption(CoverOnly)) option.CoverOnly = bindingContext.ParseResult.GetValueForOption(CoverOnly)!;
-            if (bindingContext.ParseResult.HasOption(SubOnly)) option.SubOnly = bindingContext.ParseResult.GetValueForOption(SubOnly)!;
-            if (bindingContext.ParseResult.HasOption(Debug)) option.Debug = bindingContext.ParseResult.GetValueForOption(Debug)!;
-            if (bindingContext.ParseResult.HasOption(SkipMux)) option.SkipMux = bindingContext.ParseResult.GetValueForOption(SkipMux)!;
-            if (bindingContext.ParseResult.HasOption(SkipSubtitle)) option.SkipSubtitle = bindingContext.ParseResult.GetValueForOption(SkipSubtitle)!;
-            if (bindingContext.ParseResult.HasOption(SkipCover)) option.SkipCover = bindingContext.ParseResult.GetValueForOption(SkipCover)!;
-            if (bindingContext.ParseResult.HasOption(MetadataOnly)) option.MetadataOnly = bindingContext.ParseResult.GetValueForOption(MetadataOnly)!;
-            if (bindingContext.ParseResult.HasOption(ForceHttp)) option.ForceHttp = bindingContext.ParseResult.GetValueForOption(ForceHttp)!;
-            if (bindingContext.ParseResult.HasOption(DownloadDanmaku)) option.DownloadDanmaku = bindingContext.ParseResult.GetValueForOption(DownloadDanmaku)!;
-            if (bindingContext.ParseResult.HasOption(DownloadDanmakuFormats)) option.DownloadDanmakuFormats = bindingContext.ParseResult.GetValueForOption(DownloadDanmakuFormats)!;
-            if (bindingContext.ParseResult.HasOption(SkipAi)) option.SkipAi = bindingContext.ParseResult.GetValueForOption(SkipAi)!;
-            if (bindingContext.ParseResult.HasOption(SubtitleLanguage)) option.SubtitleLanguage = bindingContext.ParseResult.GetValueForOption(SubtitleLanguage);
-            if (bindingContext.ParseResult.HasOption(AiSubtitlePolicy)) option.AiSubtitlePolicy = bindingContext.ParseResult.GetValueForOption(AiSubtitlePolicy);
-            if (bindingContext.ParseResult.HasOption(VideoAscending)) option.VideoAscending = bindingContext.ParseResult.GetValueForOption(VideoAscending)!;
-            if (bindingContext.ParseResult.HasOption(AudioAscending)) option.AudioAscending = bindingContext.ParseResult.GetValueForOption(AudioAscending)!;
-            if (bindingContext.ParseResult.HasOption(AllowPcdn)) option.AllowPcdn = bindingContext.ParseResult.GetValueForOption(AllowPcdn)!;
-            if (bindingContext.ParseResult.HasOption(FilePattern)) option.FilePattern = bindingContext.ParseResult.GetValueForOption(FilePattern)!;
-            if (bindingContext.ParseResult.HasOption(MultiFilePattern)) option.MultiFilePattern = bindingContext.ParseResult.GetValueForOption(MultiFilePattern)!;
-            if (bindingContext.ParseResult.HasOption(SelectPage))
+            if (parseResult.HasOption(UseTvApi)) option.UseTvApi = parseResult.GetValueForOption(UseTvApi)!;
+            if (parseResult.HasOption(UseAppApi)) option.UseAppApi = parseResult.GetValueForOption(UseAppApi)!;
+            if (parseResult.HasOption(UseIntlApi)) option.UseIntlApi = parseResult.GetValueForOption(UseIntlApi)!;
+            if (parseResult.HasOption(UseMP4box)) option.UseMP4box = parseResult.GetValueForOption(UseMP4box)!;
+            if (parseResult.HasOption(EncodingPriority)) option.EncodingPriority = parseResult.GetValueForOption(EncodingPriority)!;
+            if (parseResult.HasOption(DfnPriority)) option.DfnPriority = parseResult.GetValueForOption(DfnPriority)!;
+            if (parseResult.HasOption(OnlyShowInfo)) option.OnlyShowInfo = parseResult.GetValueForOption(OnlyShowInfo)!;
+            if (parseResult.HasOption(ShowAll)) option.ShowAll = parseResult.GetValueForOption(ShowAll)!;
+            if (parseResult.HasOption(UseAria2c)) option.UseAria2c = parseResult.GetValueForOption(UseAria2c)!;
+            if (parseResult.HasOption(NoAria2c)) option.NoAria2c = parseResult.GetValueForOption(NoAria2c)!;
+            if (parseResult.HasOption(Interactive)) option.Interactive = parseResult.GetValueForOption(Interactive)!;
+            if (parseResult.HasOption(HideStreams)) option.HideStreams = parseResult.GetValueForOption(HideStreams)!;
+            if (parseResult.HasOption(MultiThread)) option.MultiThread = parseResult.GetValueForOption(MultiThread)!;
+            if (parseResult.HasOption(SimplyMux)) option.SimplyMux = parseResult.GetValueForOption(SimplyMux)!;
+            if (parseResult.HasOption(VideoOnly)) option.VideoOnly = parseResult.GetValueForOption(VideoOnly)!;
+            if (parseResult.HasOption(AudioOnly)) option.AudioOnly = parseResult.GetValueForOption(AudioOnly)!;
+            if (parseResult.HasOption(DanmakuOnly)) option.DanmakuOnly = parseResult.GetValueForOption(DanmakuOnly)!;
+            if (parseResult.HasOption(CoverOnly)) option.CoverOnly = parseResult.GetValueForOption(CoverOnly)!;
+            if (parseResult.HasOption(SubOnly)) option.SubOnly = parseResult.GetValueForOption(SubOnly)!;
+            if (parseResult.HasOption(Debug)) option.Debug = parseResult.GetValueForOption(Debug)!;
+            if (parseResult.HasOption(SkipMux)) option.SkipMux = parseResult.GetValueForOption(SkipMux)!;
+            if (parseResult.HasOption(SkipSubtitle)) option.SkipSubtitle = parseResult.GetValueForOption(SkipSubtitle)!;
+            if (parseResult.HasOption(SkipCover)) option.SkipCover = parseResult.GetValueForOption(SkipCover)!;
+            if (parseResult.HasOption(MetadataOnly)) option.MetadataOnly = parseResult.GetValueForOption(MetadataOnly)!;
+            if (parseResult.HasOption(ForceHttp)) option.ForceHttp = parseResult.GetValueForOption(ForceHttp)!;
+            if (parseResult.HasOption(DownloadDanmaku)) option.DownloadDanmaku = parseResult.GetValueForOption(DownloadDanmaku)!;
+            if (parseResult.HasOption(DownloadDanmakuFormats)) option.DownloadDanmakuFormats = parseResult.GetValueForOption(DownloadDanmakuFormats)!;
+            if (parseResult.HasOption(SkipAi)) option.SkipAi = parseResult.GetValueForOption(SkipAi)!;
+            if (parseResult.HasOption(SubtitleLanguage)) option.SubtitleLanguage = parseResult.GetValueForOption(SubtitleLanguage);
+            if (parseResult.HasOption(AiSubtitlePolicy)) option.AiSubtitlePolicy = parseResult.GetValueForOption(AiSubtitlePolicy);
+            if (parseResult.HasOption(VideoAscending)) option.VideoAscending = parseResult.GetValueForOption(VideoAscending)!;
+            if (parseResult.HasOption(AudioAscending)) option.AudioAscending = parseResult.GetValueForOption(AudioAscending)!;
+            if (parseResult.HasOption(AllowPcdn)) option.AllowPcdn = parseResult.GetValueForOption(AllowPcdn)!;
+            if (parseResult.HasOption(FilePattern)) option.FilePattern = parseResult.GetValueForOption(FilePattern)!;
+            if (parseResult.HasOption(MultiFilePattern)) option.MultiFilePattern = parseResult.GetValueForOption(MultiFilePattern)!;
+            if (parseResult.HasOption(SelectPage))
             {
-                option.SelectPage = bindingContext.ParseResult.GetValueForOption(SelectPage)!;
+                option.SelectPage = parseResult.GetValueForOption(SelectPage)!;
                 option.SelectPageSpecified = true;
             }
-            if (bindingContext.ParseResult.HasOption(Language)) option.Language = bindingContext.ParseResult.GetValueForOption(Language)!;
-            if (bindingContext.ParseResult.HasOption(AudioLanguage)) option.AudioLanguage = bindingContext.ParseResult.GetValueForOption(AudioLanguage);
-            if (bindingContext.ParseResult.HasOption(UserAgent)) option.UserAgent = bindingContext.ParseResult.GetValueForOption(UserAgent)!;
-            if (bindingContext.ParseResult.HasOption(Cookie)) option.Cookie = bindingContext.ParseResult.GetValueForOption(Cookie)!;
-            if (bindingContext.ParseResult.HasOption(AccessToken)) option.AccessToken = bindingContext.ParseResult.GetValueForOption(AccessToken)!;
-            if (bindingContext.ParseResult.HasOption(Aria2cArgs)) option.Aria2cArgs = bindingContext.ParseResult.GetValueForOption(Aria2cArgs)!;
-            if (bindingContext.ParseResult.HasOption(WorkDir)) option.WorkDir = bindingContext.ParseResult.GetValueForOption(WorkDir)!;
-            if (bindingContext.ParseResult.HasOption(FFmpegPath)) option.FFmpegPath = bindingContext.ParseResult.GetValueForOption(FFmpegPath)!;
-            if (bindingContext.ParseResult.HasOption(Mp4boxPath)) option.Mp4boxPath = bindingContext.ParseResult.GetValueForOption(Mp4boxPath)!;
-            if (bindingContext.ParseResult.HasOption(Aria2cPath)) option.Aria2cPath = bindingContext.ParseResult.GetValueForOption(Aria2cPath)!;
-            if (bindingContext.ParseResult.HasOption(UposHost)) option.UposHost = bindingContext.ParseResult.GetValueForOption(UposHost)!;
-            if (bindingContext.ParseResult.HasOption(ForceReplaceHost)) option.ForceReplaceHost = bindingContext.ParseResult.GetValueForOption(ForceReplaceHost)!;
-            if (bindingContext.ParseResult.HasOption(SaveArchivesToFile)) option.SaveArchivesToFile = bindingContext.ParseResult.GetValueForOption(SaveArchivesToFile)!;
-            if (bindingContext.ParseResult.HasOption(DelayPerPage)) option.DelayPerPage = bindingContext.ParseResult.GetValueForOption(DelayPerPage)!;
-            if (bindingContext.ParseResult.HasOption(DownloadAll)) option.DownloadAll = bindingContext.ParseResult.GetValueForOption(DownloadAll);
-            if (bindingContext.ParseResult.HasOption(DelayPerVideo)) option.DelayPerVideo = bindingContext.ParseResult.GetValueForOption(DelayPerVideo);
-            if (bindingContext.ParseResult.HasOption(Host)) option.Host = bindingContext.ParseResult.GetValueForOption(Host)!;
-            if (bindingContext.ParseResult.HasOption(EpHost)) option.EpHost = bindingContext.ParseResult.GetValueForOption(EpHost)!;
-            if (bindingContext.ParseResult.HasOption(TvHost)) option.TvHost = bindingContext.ParseResult.GetValueForOption(TvHost)!;
-            if (bindingContext.ParseResult.HasOption(Area)) option.Area = bindingContext.ParseResult.GetValueForOption(Area)!;
-            if (bindingContext.ParseResult.HasOption(ConfigFile)) option.ConfigFile = bindingContext.ParseResult.GetValueForOption(ConfigFile)!;
-            if (bindingContext.ParseResult.HasOption(Aria2cProxy)) option.Aria2cProxy = bindingContext.ParseResult.GetValueForOption(Aria2cProxy)!;
-            if (bindingContext.ParseResult.HasOption(OnlyHevc)) option.OnlyHevc = bindingContext.ParseResult.GetValueForOption(OnlyHevc)!;
-            if (bindingContext.ParseResult.HasOption(OnlyAvc)) option.OnlyAvc = bindingContext.ParseResult.GetValueForOption(OnlyAvc)!;
-            if (bindingContext.ParseResult.HasOption(OnlyAv1)) option.OnlyAv1 = bindingContext.ParseResult.GetValueForOption(OnlyAv1)!;
-            if (bindingContext.ParseResult.HasOption(AddDfnSubfix)) option.AddDfnSubfix = bindingContext.ParseResult.GetValueForOption(AddDfnSubfix)!;
-            if (bindingContext.ParseResult.HasOption(NoPaddingPageNum)) option.NoPaddingPageNum = bindingContext.ParseResult.GetValueForOption(NoPaddingPageNum)!;
-            if (bindingContext.ParseResult.HasOption(BandwithAscending)) option.BandwithAscending = bindingContext.ParseResult.GetValueForOption(BandwithAscending)!;
+            if (parseResult.HasOption(Language)) option.Language = parseResult.GetValueForOption(Language)!;
+            if (parseResult.HasOption(AudioLanguage)) option.AudioLanguage = parseResult.GetValueForOption(AudioLanguage);
+            if (parseResult.HasOption(UserAgent)) option.UserAgent = parseResult.GetValueForOption(UserAgent)!;
+            if (parseResult.HasOption(Cookie)) option.Cookie = parseResult.GetValueForOption(Cookie)!;
+            if (parseResult.HasOption(AccessToken)) option.AccessToken = parseResult.GetValueForOption(AccessToken)!;
+            if (parseResult.HasOption(Aria2cArgs)) option.Aria2cArgs = parseResult.GetValueForOption(Aria2cArgs)!;
+            if (parseResult.HasOption(WorkDir)) option.WorkDir = parseResult.GetValueForOption(WorkDir)!;
+            if (parseResult.HasOption(FFmpegPath)) option.FFmpegPath = parseResult.GetValueForOption(FFmpegPath)!;
+            if (parseResult.HasOption(Mp4boxPath)) option.Mp4boxPath = parseResult.GetValueForOption(Mp4boxPath)!;
+            if (parseResult.HasOption(Aria2cPath)) option.Aria2cPath = parseResult.GetValueForOption(Aria2cPath)!;
+            if (parseResult.HasOption(UposHost)) option.UposHost = parseResult.GetValueForOption(UposHost)!;
+            if (parseResult.HasOption(ForceReplaceHost)) option.ForceReplaceHost = parseResult.GetValueForOption(ForceReplaceHost)!;
+            if (parseResult.HasOption(SaveArchivesToFile)) option.SaveArchivesToFile = parseResult.GetValueForOption(SaveArchivesToFile)!;
+            if (parseResult.HasOption(DelayPerPage)) option.DelayPerPage = parseResult.GetValueForOption(DelayPerPage)!;
+            if (parseResult.HasOption(DownloadAll)) option.DownloadAll = parseResult.GetValueForOption(DownloadAll);
+            if (parseResult.HasOption(DelayPerVideo)) option.DelayPerVideo = parseResult.GetValueForOption(DelayPerVideo);
+            if (parseResult.HasOption(Host)) option.Host = parseResult.GetValueForOption(Host)!;
+            if (parseResult.HasOption(EpHost)) option.EpHost = parseResult.GetValueForOption(EpHost)!;
+            if (parseResult.HasOption(TvHost)) option.TvHost = parseResult.GetValueForOption(TvHost)!;
+            if (parseResult.HasOption(Area)) option.Area = parseResult.GetValueForOption(Area)!;
+            if (parseResult.HasOption(ConfigFile)) option.ConfigFile = parseResult.GetValueForOption(ConfigFile)!;
+            if (parseResult.HasOption(Aria2cProxy)) option.Aria2cProxy = parseResult.GetValueForOption(Aria2cProxy)!;
+            if (parseResult.HasOption(OnlyHevc)) option.OnlyHevc = parseResult.GetValueForOption(OnlyHevc)!;
+            if (parseResult.HasOption(OnlyAvc)) option.OnlyAvc = parseResult.GetValueForOption(OnlyAvc)!;
+            if (parseResult.HasOption(OnlyAv1)) option.OnlyAv1 = parseResult.GetValueForOption(OnlyAv1)!;
+            if (parseResult.HasOption(AddDfnSubfix)) option.AddDfnSubfix = parseResult.GetValueForOption(AddDfnSubfix)!;
+            if (parseResult.HasOption(NoPaddingPageNum)) option.NoPaddingPageNum = parseResult.GetValueForOption(NoPaddingPageNum)!;
+            if (parseResult.HasOption(BandwithAscending)) option.BandwithAscending = parseResult.GetValueForOption(BandwithAscending)!;
             return option;
         }
     }
+
+    /// <summary>
+    /// 根命令的全部选项，顺序与 --help 展示一致。注册为 global option 后子命令可复用同一批实例，
+    /// 因此 MyOptionBinder.Bind 在子命令解析结果上依然逐项可用。
+    /// </summary>
+    private static readonly Option[] AllOptions =
+    [
+        UseTvApi,
+        UseAppApi,
+        UseIntlApi,
+        UseMP4box,
+        EncodingPriority,
+        DfnPriority,
+        OnlyShowInfo,
+        ShowAll,
+        UseAria2c,
+        NoAria2c,
+        Interactive,
+        HideStreams,
+        MultiThread,
+        SimplyMux,
+        VideoOnly,
+        AudioOnly,
+        DanmakuOnly,
+        SubOnly,
+        CoverOnly,
+        Debug,
+        SkipMux,
+        SkipSubtitle,
+        SkipCover,
+        MetadataOnly,
+        ForceHttp,
+        DownloadDanmaku,
+        DownloadDanmakuFormats,
+        SkipAi,
+        SubtitleLanguage,
+        AiSubtitlePolicy,
+        VideoAscending,
+        AudioAscending,
+        AllowPcdn,
+        FilePattern,
+        MultiFilePattern,
+        SelectPage,
+        Language,
+        AudioLanguage,
+        UserAgent,
+        Cookie,
+        AccessToken,
+        Aria2cArgs,
+        WorkDir,
+        FFmpegPath,
+        Mp4boxPath,
+        Aria2cPath,
+        UposHost,
+        ForceReplaceHost,
+        SaveArchivesToFile,
+        DelayPerPage,
+        DownloadAll,
+        DelayPerVideo,
+        Host,
+        EpHost,
+        TvHost,
+        Area,
+        Aria2cProxy,
+        OnlyHevc,
+        OnlyAvc,
+        OnlyAv1,
+        AddDfnSubfix,
+        NoPaddingPageNum,
+        BandwithAscending,
+        ConfigFile
+    ];
+
+    /// <summary>
+    /// 全部选项的别名，供配置文件校验使用：global option 不在 rootCommand.Options 里，
+    /// 直接读命令树会漏掉整批参数。
+    /// </summary>
+    public static IReadOnlyList<string> OptionAliases { get; } =
+        AllOptions.SelectMany(option => option.Aliases).Distinct(StringComparer.Ordinal).ToArray();
 
     public static RootCommand GetRootCommand(Func<MyOption, Task> action)
     {
         var rootCommand = new RootCommand
         {
-            Url,
-            UseTvApi,
-            UseAppApi,
-            UseIntlApi,
-            UseMP4box,
-            EncodingPriority,
-            DfnPriority,
-            OnlyShowInfo,
-            ShowAll,
-            UseAria2c,
-            NoAria2c,
-            Interactive,
-            HideStreams,
-            MultiThread,
-            SimplyMux,
-            VideoOnly,
-            AudioOnly,
-            DanmakuOnly,
-            SubOnly,
-            CoverOnly,
-            Debug,
-            SkipMux,
-            SkipSubtitle,
-            SkipCover,
-            MetadataOnly,
-            ForceHttp,
-            DownloadDanmaku,
-            DownloadDanmakuFormats,
-            SkipAi,
-            SubtitleLanguage,
-            AiSubtitlePolicy,
-            VideoAscending,
-            AudioAscending,
-            AllowPcdn,
-            FilePattern,
-            MultiFilePattern,
-            SelectPage,
-            Language,
-            AudioLanguage,
-            UserAgent,
-            Cookie,
-            AccessToken,
-            Aria2cArgs,
-            WorkDir,
-            FFmpegPath,
-            Mp4boxPath,
-            Aria2cPath,
-            UposHost,
-            ForceReplaceHost,
-            SaveArchivesToFile,
-            DelayPerPage,
-            DownloadAll,
-            DelayPerVideo,
-            Host,
-            EpHost,
-            TvHost,
-            Area,
-            Aria2cProxy,
-            OnlyHevc,
-            OnlyAvc,
-            OnlyAv1,
-            AddDfnSubfix,
-            NoPaddingPageNum,
-            BandwithAscending
+            Url
         };
 
-        rootCommand.AddGlobalOption(ConfigFile);
+        foreach (var option in AllOptions) rootCommand.AddGlobalOption(option);
         rootCommand.SetHandler(async (myOption) => await action(myOption), new MyOptionBinder());
 
         return rootCommand;
+    }
+
+    private static readonly Argument<string> UpdateDownloadedDir =
+        new("dir", "要追更的目录: 仓库根(扫描其直接子目录)或番剧目录本身(其下有 bbdown.json), 默认为当前目录")
+        { Arity = ArgumentArity.ZeroOrOne };
+
+    internal sealed record UpdateDownloadedRequest(MyOption Option, string Directory);
+
+    /// <summary>
+    /// 追更子命令。参数全部复用根命令的 global option 实例，因此参数集与根命令天然一致，
+    /// 不需要重复声明一遍。
+    /// </summary>
+    public static Command GetUpdateDownloadedCommand(Func<MyOption, string, Task> action)
+    {
+        var command = new Command(
+            "update-downloaded",
+            "按各目录 bbdown.json 记载的来源链接追更已下载番剧; 已下完的集会跳过下载, 只补新集并刷新弹幕/元数据")
+        {
+            UpdateDownloadedDir
+        };
+        command.AddAlias("ud");
+        command.SetHandler(async (request) => await action(request.Option, request.Directory), new UpdateDownloadedBinder());
+        return command;
+    }
+
+    internal class UpdateDownloadedBinder : BinderBase<UpdateDownloadedRequest>
+    {
+        protected override UpdateDownloadedRequest GetBoundValue(BindingContext bindingContext) => new(
+            MyOptionBinder.Bind(bindingContext.ParseResult, ""),
+            bindingContext.ParseResult.GetValueForArgument(UpdateDownloadedDir) ?? "");
     }
 }

@@ -51,4 +51,30 @@ public class ConfigParserTests
             File.Delete(path);
         }
     }
+
+    /// <summary>
+    /// 根命令的选项全部注册为 global option 后不再出现在 rootCommand.Options 里，
+    /// 配置文件白名单必须改用 CommandLineInvoker.OptionAliases，否则这些老配置会集体失效。
+    /// </summary>
+    [Fact]
+    public async Task ConfigFile_SelectPageAndDanmaku_AreRecognisedAndMerged()
+    {
+        var path = Path.GetTempFileName();
+        await File.WriteAllTextAsync(path, "-dd\n-p ALL\n--download-danmaku-formats xml\n");
+        var arguments = new List<string> { "BV1xx411c7mD", "--config-file", path };
+        var rootCommand = CommandLineInvoker.GetRootCommand(_ => Task.CompletedTask);
+        try
+        {
+            Assert.True(BBDownTConfigParser.HandleConfig(arguments, rootCommand));
+
+            Assert.Contains("--download-danmaku", arguments);
+            Assert.Contains("--select-page", arguments);
+            Assert.Contains("ALL", arguments);
+            Assert.Contains("--download-danmaku-formats", arguments);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

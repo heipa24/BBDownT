@@ -1,6 +1,7 @@
 using BBDownT.Core;
 using BBDownT.Core.Entity;
 using System.CommandLine;
+using System.Text.Json.Nodes;
 using static BBDownT.Core.Entity.Entity;
 
 namespace BBDownT.Tests;
@@ -279,4 +280,109 @@ public class OptionBehaviorTests
             dur = 1
         };
     }
+
+    [Fact]
+    public void WriteBbdownMetadata_RecordsSelectPageAndDanmakuFormats() => InFreshDirectory(dir =>
+    {
+        var savePath = Path.Combine(dir, "[P01]x.mp4");
+        File.WriteAllText(savePath, "x");
+        File.WriteAllText(Path.ChangeExtension(savePath, ".xml"), "<i/>");
+
+        Program.WriteBbdownMetadata(savePath, "ss1", "标题", 1, new Program.BbdownMarkers("ALL", "xml,ass"));
+
+        var root = ReadBbdownJson(dir);
+        Assert.Equal("ALL", (string?)root["selectPage"]);
+        Assert.Equal("xml,ass", (string?)root["danmakuFormats"]);
+    });
+
+    [Fact]
+    public void WriteBbdownMetadata_RunWithoutThoseOptions_KeepsPreviouslyRecordedMarkers() => InFreshDirectory(dir =>
+    {
+        var savePath = Path.Combine(dir, "[P01]x.mp4");
+        File.WriteAllText(savePath, "x");
+
+        Program.WriteBbdownMetadata(savePath, "ss1", "标题", 1, new Program.BbdownMarkers("ALL", "xml,ass"));
+        Program.WriteBbdownMetadata(savePath, "ss1", "标题", 1, new Program.BbdownMarkers(null, null));
+
+        var root = ReadBbdownJson(dir);
+        Assert.Equal("ALL", (string?)root["selectPage"]);
+        Assert.Equal("xml,ass", (string?)root["danmakuFormats"]);
+    });
+
+    [Fact]
+    public void WriteBbdownMetadata_DefaultOptions_WriteNeitherMarker() => InFreshDirectory(dir =>
+    {
+        var savePath = Path.Combine(dir, "[P01]x.mp4");
+        File.WriteAllText(savePath, "x");
+
+        Program.WriteBbdownMetadata(savePath, "ss1", "标题", 1, new Program.BbdownMarkers(null, null));
+
+        var root = ReadBbdownJson(dir);
+        Assert.False(root.ContainsKey("selectPage"));
+        Assert.False(root.ContainsKey("danmakuFormats"));
+    });
+
+    [Fact]
+    public void BuildBbdownMarkers_WithoutExplicitOptions_RecordsNothing()
+    {
+        var markers = Program.BuildBbdownMarkers(new MyOption(), false, BBDownTDanmakuFormatInfo.DefaultFormats);
+
+        Assert.Null(markers.SelectPage);
+        Assert.Null(markers.DanmakuFormats);
+    }
+
+    [Fact]
+    public void BuildBbdownMarkers_RecordsRawSelectPageAndEffectiveFormats()
+    {
+        var markers = Program.BuildBbdownMarkers(
+            new MyOption { SelectPage = "3-5,LATEST", SelectPageSpecified = true },
+            downloadDanmaku: true,
+            formats: [BBDownTDanmakuFormat.Ass]);
+
+        Assert.Equal("3-5,LATEST", markers.SelectPage);
+        Assert.Equal("ass", markers.DanmakuFormats);
+    }
+
+    [Fact]
+    public void BuildBbdownMarkers_DanmakuRun_RecordsDefaultFormats()
+    {
+        // --danmaku-only 也会让 SetUpWork 把 downloadDanmaku 置真, 同样算"下过弹幕"
+        var markers = Program.BuildBbdownMarkers(new MyOption { DanmakuOnly = true }, true, BBDownTDanmakuFormatInfo.DefaultFormats);
+
+        Assert.Equal("xml,ass", markers.DanmakuFormats);
+    }
+
+    [Theory]
+    [InlineData(null, "ALL", true)]
+    [InlineData("3", "ALL", true)]
+    [InlineData("ALL", "all", true)]
+    [InlineData("3", "5", true)]
+    [InlineData("ALL", "3", false)]
+    [InlineData("ALL", null, false)]
+    [InlineData("ALL", "", false)]
+    [InlineData(null, null, false)]
+    public void ShouldRecordSelectPage_KeepsTheAllMarker(string? recorded, string? incoming, bool expected) =>
+        Assert.Equal(expected, Program.ShouldRecordSelectPage(recorded, incoming));
+
+    [Fact]
+    public void WriteBbdownMetadata_NarrowerSelectPage_DoesNotDowngradeTheAllMarker() => InFreshDirectory(dir =>
+    {
+        var savePath = Path.Combine(dir, "[P03]x.mp4");
+        File.WriteAllText(savePath, "x");
+
+        Program.WriteBbdownMetadata(savePath, "ss1", "标题", 3, new Program.BbdownMarkers("ALL", null));
+        Program.WriteBbdownMetadata(savePath, "ss1", "标题", 3, new Program.BbdownMarkers("3", null));
+
+        Assert.Equal("ALL", (string?)ReadBbdownJson(dir)["selectPage"]);
+    });
+
+    private static void InFreshDirectory(Action<string> body)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "bbdown-markers-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try { body(dir); } finally { Directory.Delete(dir, true); }
+    }
+
+    private static JsonObject ReadBbdownJson(string dir) =>
+        JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "bbdown.json")))!.AsObject();
 }
