@@ -245,4 +245,213 @@ public class MetadataRefreshTests
         Assert.Equal("new media", File.ReadAllText(destination));
         Assert.Equal("media", File.ReadAllText(media));
     }
+
+    private static MediaProbe.FileTags Preserved(
+        List<MediaProbe.Tag>? format = null,
+        List<MediaProbe.StreamTag>? streams = null,
+        List<ViewPoint>? chapters = null) =>
+        new(1419,
+            format ?? [new MediaProbe.Tag("title", "旧标题"), new MediaProbe.Tag("synopsis", "旧简介"), new MediaProbe.Tag("artist", "旧UP")],
+            streams ??
+            [
+                new MediaProbe.StreamTag("video", 0, [new MediaProbe.Tag("language", "und")]),
+                new MediaProbe.StreamTag("audio", 0, [new MediaProbe.Tag("language", "jpn")]),
+                new MediaProbe.StreamTag("subtitle", 0, [new MediaProbe.Tag("language", "chi"), new MediaProbe.Tag("title", "中文")])
+            ],
+            chapters ?? [new ViewPoint { title = "Intro", start = 69, end = 160 }]);
+
+    private static List<string> InvokePreserved(string media, string staged, MediaProbe.FileTags? preserved,
+        string pic = "", List<Subtitle>? subs = null, List<ViewPoint>? points = null, bool audioOnly = false,
+        bool simplyMux = false)
+    {
+        var captured = new List<string>();
+        BBDownTMuxer.UpdateMetadata(media, staged,
+            desc: "简介", title: "标题", author: "UP主", episodeId: "",
+            pic: pic, lang: "", subs: subs, audioOnly: audioOnly, points: points, pubTime: 0,
+            simplyMux: simplyMux, preserved: preserved,
+            runFfmpeg: args =>
+            {
+                captured.AddRange(args);
+                return 0;
+            });
+        return captured;
+    }
+
+    [Fact]
+    public void TheRefreshReEmitsPreservedTagsBeforeTheFreshValues()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved());
+
+        Assert.True(HasPair(args, "-metadata", "synopsis=旧简介"));
+        Assert.True(HasPair(args, "-metadata", "artist=旧UP"));
+        // 同键必须让接口给出的新值胜出
+        Assert.True(args.IndexOf("title=旧标题") < args.IndexOf("title=标题"));
+        Assert.True(args.IndexOf("title=旧标题") >= 0 && args.IndexOf("title=标题") >= 0);
+    }
+
+    [Fact]
+    public void AudioAndSubtitleStreamTagsSurviveWithoutNewSubtitles()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved());
+
+        Assert.True(HasPair(args, "-metadata:s:a:0", "language=jpn"));
+        Assert.True(HasPair(args, "-metadata:s:s:0", "language=chi"));
+        Assert.True(HasPair(args, "-metadata:s:s:0", "title=中文"));
+        Assert.True(HasPair(args, "-metadata:s:v:0", "language=und"));
+    }
+
+    [Fact]
+    public void SubtitleStreamTagsAreNotReappliedWhenNewSubtitlesArrive()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+        var subtitle = files.Write("zh.srt", "1\n00:00:00,000 --> 00:00:01,000\n字幕\n");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved(),
+            subs: [new Subtitle { lan = "en-US", url = "https://example.com/sub", path = subtitle }]);
+
+        // 旧字幕流不再映射, 它的标签也不能套到新字幕头上
+        Assert.DoesNotContain("中文", args);
+        Assert.True(HasPair(args, "-metadata:s:a:0", "language=jpn"));
+    }
+
+    [Fact]
+    public void TheReplacedCoverStreamLosesItsOwnTagsToo()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+        var cover = files.Write("cover.jpg", "cover");
+        var streams = new List<MediaProbe.StreamTag>
+        {
+            new("video", 0, [new MediaProbe.Tag("language", "und")]),
+            new("video", 1, [new MediaProbe.Tag("title", "旧封面")])
+        };
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved(streams: streams), pic: cover);
+
+        Assert.DoesNotContain("旧封面", args);
+        Assert.True(HasPair(args, "-metadata:s:v:0", "language=und"));
+    }
+
+    [Fact]
+    public void AudioOnlyCoverRefreshKeepsNoInputVideoTags()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.m4a", "media");
+        var cover = files.Write("cover.jpg", "cover");
+
+        var args = InvokePreserved(media, files.FilePath("staged.m4a"), Preserved(),
+            pic: cover, audioOnly: true);
+
+        Assert.DoesNotContain("-metadata:s:v:0", args);
+    }
+
+    [Fact]
+    public void SubtitleTrackNamesAreReEmittedUnderTheKeyFfmpegWrites()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+        var streams = new List<MediaProbe.StreamTag>
+        {
+            new("subtitle", 0, [new MediaProbe.Tag("name", "中文")])
+        };
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved(streams: streams));
+
+        // ffprobe 把 mp4 字幕轨标题读成 name, 但封装只接受 title
+        Assert.True(HasPair(args, "-metadata:s:s:0", "title=中文"));
+        Assert.DoesNotContain("name=中文", args);
+    }
+
+    [Fact]
+    public void ChaptersFallBackToTheExistingFileWhenTheApiReturnsNone()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved());
+
+        Assert.Contains("-map_chapters", args);
+    }
+
+    [Fact]
+    public void NoChaptersAreMappedWhenNeitherTheApiNorTheFileHasAny()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"),
+            Preserved(chapters: []));
+
+        Assert.DoesNotContain("-map_chapters", args);
+    }
+
+    [Fact]
+    public void SimplyMuxRefreshStillWritesNoTagsAtAll()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), Preserved(), simplyMux: true);
+
+        Assert.DoesNotContain("-metadata", args);
+    }
+
+    [Fact]
+    public void RefreshWithoutPreservedDataStillWritesOnlyTheFreshTags()
+    {
+        using var files = new MediaTestDirectory();
+        var media = files.Write("title.mp4", "media");
+
+        var args = InvokePreserved(media, files.FilePath("staged.mp4"), preserved: null);
+
+        Assert.DoesNotContain("synopsis=旧简介", args);
+        Assert.True(HasPair(args, "-metadata", "title=标题"));
+    }
+
+    private static Func<string[], string?> ProbesOriginalAndStaged(string original, string staged) =>
+        args => "{\"format\":{\"duration\":\"" +
+            (args[^1].Contains(".partial") ? staged : original) + "\"}}";
+
+    [Fact]
+    public void TheStagedRefreshIsRejectedWhenItsDurationDiffers()
+    {
+        using var files = new MediaTestDirectory();
+        var destination = files.Write("title.mp4", "original media");
+
+        var refreshed = Program.RefreshExistingMetadata(new MyOption(), destination, desc: "", title: "标题",
+            author: "", episodeId: "", coverPath: "", lang: "", subtitleInfo: [], points: null, pubTime: 0,
+            readProbe: ProbesOriginalAndStaged("1419", "360"), runFfmpeg: _ => 0);
+
+        Assert.False(refreshed);
+        Assert.Equal("original media", File.ReadAllText(destination));
+        Assert.Empty(Directory.GetFiles(files.Root, "*.partial*"));
+    }
+
+    [Fact]
+    public void TheStagedRefreshReplacesTheFileWhenTheDurationMatches()
+    {
+        using var files = new MediaTestDirectory();
+        var destination = files.Write("title.mp4", "original media");
+        var probe = ProbesOriginalAndStaged("1419", "1419");
+
+        var refreshed = Program.RefreshExistingMetadata(new MyOption(), destination, desc: "", title: "标题",
+            author: "", episodeId: "", coverPath: "", lang: "", subtitleInfo: [], points: null, pubTime: 0,
+            readProbe: args => probe(args),
+            runFfmpeg: args =>
+            {
+                // 生产由 ffmpeg 产出暂存文件, 这里只保证它存在且非空
+                File.WriteAllText(args.ToArray()[^1], "refreshed media");
+                return 0;
+            });
+
+        Assert.True(refreshed);
+        Assert.Equal("refreshed media", File.ReadAllText(destination));
+    }
 }

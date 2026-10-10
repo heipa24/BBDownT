@@ -172,6 +172,64 @@ public class ChapterMetadataTests
         Assert.Contains(streams, stream => stream.GetProperty("codec_type").GetString() == "audio");
     }
 
+    // 复用 ChapterMuxFact: 需要 BBDOWN_CHAPTER_TEST_DIR + ffmpeg/ffprobe, 否则 Skip。
+    // 复刻"接口只返回试看时"的退化场景: 拿不回配音语言与字幕, 原文件的这两类标签必须保住。
+    [ChapterMuxFact]
+    public void FFmpegRefreshKeepsAudioLanguageAndSubtitleNameOfTheExistingFile()
+    {
+        var root = Path.GetFullPath(Environment.GetEnvironmentVariable("BBDOWN_CHAPTER_TEST_DIR")!);
+        var bare = Path.Combine(root, "tags-bare.mp4");
+        var source = Path.Combine(root, "tags-source.mp4");
+        var target = Path.Combine(root, "tags-target.mp4");
+        var srt = Path.Combine(root, "tags.srt");
+        File.WriteAllText(srt, "1\n00:00:00,000 --> 00:00:01,000\n字幕\n");
+
+        var ffmpeg = BBDownTUtil.FindExecutable("ffmpeg")!;
+        var ffprobe = BBDownTUtil.FindExecutable("ffprobe")!;
+        RunTool(ffmpeg, "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-t", "2", "-shortest",
+            "-c:v", "mpeg4", "-c:a", "aac", "-threads", "1",
+            "-metadata", "title=旧标题", "-metadata", "artist=旧UP",
+            "-metadata:s:a:0", "language=jpn", bare);
+        RunTool(ffmpeg, "-v", "error", "-i", bare, "-i", srt, "-map", "0", "-map", "1",
+            "-c", "copy", "-c:s", "mov_text", "-threads", "1",
+            "-metadata:s:s:0", "language=chi", "-metadata:s:s:0", "title=中文", source);
+        File.Copy(source, target, overwrite: true);
+
+        var previousFfmpeg = BBDownTMuxer.FFMPEG;
+        var previousFfprobe = MediaProbe.FFPROBE;
+        try
+        {
+            BBDownTMuxer.FFMPEG = ffmpeg;
+            MediaProbe.FFPROBE = ffprobe;
+            var preserved = MediaProbe.ReadTags(target);
+            Assert.NotNull(preserved);
+            // 刷新时既没有 --lang 也没有可重下的字幕, 全靠读回来的原标签
+            Assert.True(MediaOutput.Write(target, staged => BBDownTMuxer.UpdateMetadata(target, staged,
+                desc: "新简介", title: "新标题", author: "", episodeId: "", pic: "", lang: "",
+                subs: [], points: null, pubTime: 0, preserved: preserved)));
+        }
+        finally
+        {
+            BBDownTMuxer.FFMPEG = previousFfmpeg;
+            MediaProbe.FFPROBE = previousFfprobe;
+        }
+
+        using var probe = JsonDocument.Parse(RunTool(ffprobe, "-v", "error",
+            "-show_entries", "format=duration:format_tags:stream=index,codec_type:stream_tags",
+            "-of", "json", target));
+        var formatTags = probe.RootElement.GetProperty("format").GetProperty("tags");
+        Assert.Equal("新标题", formatTags.GetProperty("title").GetString());   // 新值覆盖
+        Assert.Equal("旧UP", formatTags.GetProperty("artist").GetString());    // 接口给不出作者, 保留原值
+        var streams = probe.RootElement.GetProperty("streams").EnumerateArray()
+            .ToDictionary(stream => stream.GetProperty("codec_type").GetString(),
+                stream => stream.GetProperty("tags"));
+        Assert.Equal("jpn", streams["audio"].GetProperty("language").GetString());
+        Assert.Equal("chi", streams["subtitle"].GetProperty("language").GetString());
+        Assert.Equal("中文", streams["subtitle"].GetProperty("name").GetString());
+        Assert.Equal("2.000000", probe.RootElement.GetProperty("format").GetProperty("duration").GetString());
+    }
+
     private static string RunTool(string executable, params string[] arguments)
     {
         var start = new ProcessStartInfo(executable)

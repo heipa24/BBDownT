@@ -237,6 +237,7 @@ public static partial class Parser
         if (root.TryGetProperty("dash", out var dashNode) && dashNode.ValueKind == JsonValueKind.Object) //dash
         {
             int pDur = PlayResponseMapper.GetDurationSeconds(root);
+            parsedResult.TotalDurationSeconds = pDur;
             var audioData = data;
             var audioRoot = root;
 
@@ -290,6 +291,7 @@ public static partial class Parser
             // DURL replaces its initial response rather than accumulating tracks.
             parsedResult.IsPreviewOnly = IsPreviewOnlyResponse(data);
             root = SelectResponseRoot(data);
+            parsedResult.TotalDurationSeconds = PlayResponseMapper.GetDurationSeconds(root);
             AudioLanguageMapper.Map(root, parsedResult, requestedAudioLanguage);
             PlayResponseMapper.MapDurl(root, parsedResult);
         }

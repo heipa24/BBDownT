@@ -35,7 +35,7 @@ internal static class CommandLineInvoker
     private static readonly Option<bool> SkipMux = new(["--skip-mux"], "跳过混流步骤");
     private static readonly Option<bool> SkipSubtitle = new(["--skip-subtitle"], "跳过字幕下载");
     private static readonly Option<bool> SkipCover = new(["--skip-cover"], "跳过封面下载");
-    private static readonly Option<bool> MetadataOnly = new(["--metadata-only"], "输出文件已存在时仅更新其元数据(标题/描述/封面/章节/字幕)，不重新下载或重编码音视频流");
+    private static readonly Option<bool> MetadataOnly = new(["--metadata-only"], "输出文件已存在时仅更新其元数据(标题/描述/封面/章节/字幕)，不重新下载或重编码音视频流；会保留原文件已有的音频语言/字幕标题等标签，接口只返回试看片段时先校验原文件为完整正片再刷新(需要 ffprobe)");
     private static readonly Option<bool> ForceHttp = new(["--force-http"], "下载音视频时强制使用HTTP协议替换HTTPS(默认开启)");
     private static readonly Option<bool> DownloadDanmaku = new(["--download-danmaku", "-dd"], "下载弹幕");
     private static readonly Option<string> DownloadDanmakuFormats = new(["--download-danmaku-formats", "-ddf"], $"指定需下载的弹幕格式, 用逗号分隔, 可选 {string.Join('/', BBDownTDanmakuFormatInfo.AllFormatNames)}, 默认: \"{string.Join(',', BBDownTDanmakuFormatInfo.AllFormatNames)}\"");

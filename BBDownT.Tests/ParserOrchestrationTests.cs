@@ -69,6 +69,24 @@ public class ParserOrchestrationTests
         Assert.Single(result.Clips);
     }
 
+    [Fact]
+    public async Task DurlPreview_RecordsTheFullEpisodeLengthRatherThanThePreviewClip()
+    {
+        // 试看响应里 timelength 仍是整集, 只有 durl.length 被截成六分钟
+        const string Response = """
+            {"result":{"is_preview":1,"quality":80,"video_codecid":7,"timelength":1419136,
+            "durl":[{"url":"https://cdn.test/preview.mp4","size":51188695,"length":360151}]}}
+            """;
+        var responses = new Queue<string>([Response, Response]);
+
+        var result = await Parser.ExtractTracksWithFetcherAsync("ep:1", "2", "3", "4", false, false, false, "0",
+            _ => Task.FromResult(responses.Dequeue()), (_, _) => throw new Exception("No intl requests"));
+
+        Assert.True(result.IsPreviewOnly);
+        Assert.Equal(1419, result.TotalDurationSeconds);
+        Assert.Equal(360, Assert.Single(result.VideoTracks).dur);
+    }
+
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]

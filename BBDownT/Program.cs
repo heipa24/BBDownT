@@ -728,7 +728,15 @@ partial class Program
             // cannot be saved or archived as a completed episode.
             var parsedResult = myOption.SubOnly ? new ParsedResult()
                 : languageTracks ?? await FetchTracks(null);
-            if (StopPreviewDownload(myOption, parsedResult)) return DownloadPageOutcome.Failed;
+            var previewCheck = parsedResult.IsPreviewOnly
+                ? CheckPreviewMetadataRefresh(myOption, parsedResult, p, pagesCount, apiType, savePathFormat,
+                    title, pubTime, requestedAudioLanguage)
+                : PreviewRefreshCheck.NotRequired;
+            if (StopPreviewDownload(myOption, parsedResult, previewCheck.Verified))
+            {
+                if (previewCheck.Reason.Length > 0) LogError(previewCheck.Reason);
+                return DownloadPageOutcome.Failed;
+            }
             if (parsedResult.IsPreviewOnly) LogWarn("当前接口仅提供试看片段。");
 
             //处理封面&&字幕
@@ -948,6 +956,8 @@ partial class Program
                         input, p.index, p.aid, relatedTask);
                 }
 
+                if (StopPreviewMediaDownload(parsedResult)) return DownloadPageOutcome.Failed;
+
                 if (selectedVideo != null)
                 {
                     //杜比视界, 若ffmpeg版本小于5.0, 使用mp4box封装
@@ -1066,6 +1076,7 @@ partial class Program
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
                         input, p.index, p.aid, relatedTask);
                 }
+                if (StopPreviewMediaDownload(parsedResult)) return DownloadPageOutcome.Failed;
                 var pad = string.Empty.PadRight(clips.Count.ToString().Length, '0');
                 var files = new List<string>();
                 for (int i = 0; i < clips.Count; i++)
@@ -1139,13 +1150,89 @@ partial class Program
         }
     }
 
-    internal static bool StopPreviewDownload(MyOption option, ParsedResult result)
+    internal static bool StopPreviewDownload(MyOption option, ParsedResult result, bool verifiedMetadataRefresh = false)
     {
         if (!result.IsPreviewOnly || option.OnlyShowInfo || option.SubOnly) return false;
         // DASH handles attachment-only modes before downloading media. DURL
         // currently takes the media path even with those options enabled.
         if ((option.CoverOnly || option.DanmakuOnly) && result.Clips.Count == 0) return false;
+        // 刷新只搬运已存在文件的媒体流, 不会把试看片段写盘, 因此校验通过后可以放行
+        if (verifiedMetadataRefresh) return false;
         LogError("当前接口仅返回试看片段，已停止下载；请检查登录状态和会员权限。");
+        return true;
+    }
+
+    internal readonly record struct PreviewRefreshCheck(bool Verified, string Reason)
+    {
+        internal static readonly PreviewRefreshCheck NotRequired = new(false, "");
+    }
+
+    /// <summary>
+    /// 接口只返回试看片段时判断 --metadata-only 能否安全刷新已存在的输出文件。
+    /// 关键是先证明那个文件是一集完整正片, 否则会把六分钟的试看片段洗成"已下载完成"并写进归档。
+    /// </summary>
+    internal static PreviewRefreshCheck CheckPreviewMetadataRefresh(
+        MyOption myOption, ParsedResult parsedResult, Page p, int pagesCount, string apiType,
+        string savePathFormat, string title, long pubTime, string? requestedAudioLanguage,
+        Func<string[], string?>? readProbe = null)
+    {
+        if (!myOption.MetadataOnly) return PreviewRefreshCheck.NotRequired;
+        if (UsesTrackPlaceholder(savePathFormat))
+            return NoPreviewRefresh("文件名模板含画质/编码等轨道信息, 试看响应拼不出原文件名; 请改用不含这些占位符的 --file-pattern");
+        if (parsedResult.TotalDurationSeconds <= 0)
+            return NoPreviewRefresh("接口未提供整集时长, 无法确认已存在的文件是否完整");
+
+        var savePath = BuildMetadataRefreshPath(myOption, parsedResult, savePathFormat, title, p, pagesCount, apiType,
+            pubTime, requestedAudioLanguage);
+        if (!ShouldUseMuxedOutputCache(myOption, savePath))
+            return NoPreviewRefresh($"{savePath} 不存在或为空, 试看片段不会写入输出文件");
+
+        var actual = MediaProbe.DurationSeconds(savePath, readProbe);
+        if (actual is null)
+            return NoPreviewRefresh($"{savePath} 无法用 ffprobe 校验时长(缺少 ffprobe 或文件不可读), 已停止刷新");
+
+        var total = (double)parsedResult.TotalDurationSeconds;
+        var tolerance = Math.Max(3, total * 0.01);
+        if (actual < total - tolerance)
+            return NoPreviewRefresh($"{savePath} 时长 {actual:F0}s 远短于整集 {total:F0}s, 更像试看片段, 不会当作完整成片刷新");
+
+        return new PreviewRefreshCheck(true, "");
+    }
+
+    private static PreviewRefreshCheck NoPreviewRefresh(string reason) => new(false, reason);
+
+    /// <summary>
+    /// 不依赖轨道信息地拼出刷新目标路径, 必须与两个下载分支的算法逐字一致,
+    /// 否则校验的是 A 文件而分支去写 B 文件。
+    /// </summary>
+    internal static string BuildMetadataRefreshPath(MyOption myOption, ParsedResult parsedResult, string savePathFormat,
+        string title, Page p, int pagesCount, string apiType, long pubTime, string? requestedAudioLanguage)
+    {
+        var savePath = FormatSavePath(savePathFormat, title, null, null, p, pagesCount, apiType, pubTime);
+        // DURL 分支不给路径加配音语言后缀, 只有 DASH 分支会
+        if (parsedResult.Clips.Count == 0)
+            savePath = AudioLanguageSelection.OutputPath(savePath, requestedAudioLanguage, myOption.AudioOnly && !myOption.VideoOnly);
+        if (myOption.AudioOnly && !myOption.VideoOnly) savePath = savePath[..^4] + ".m4a";
+        return savePath;
+    }
+
+    // FormatSavePath 里这几个占位符的值来自选定轨道, 试看响应下它们与当初下载时的轨道不同
+    internal static bool UsesTrackPlaceholder(string savePathFormat) =>
+        InfoRegex().Matches(savePathFormat).Select(m => m.Groups[1].Value)
+            .Intersect(TrackDependentPlaceholders).Any();
+
+    private static readonly HashSet<string> TrackDependentPlaceholders =
+    [
+        "dfn", "res", "fps", "videoCodecs", "videoBandwidth", "audioCodecs", "audioBandwidth"
+    ];
+
+    /// <summary>
+    /// 兜底: 已经走到真正下载媒体的位置, 试看片段一律不写盘。放行条件被改坏时这里还能挡住。
+    /// </summary>
+    internal static bool StopPreviewMediaDownload(ParsedResult parsedResult)
+    {
+        if (!parsedResult.IsPreviewOnly) return false;
+        LogError("试看片段不会写入输出文件；请检查登录状态和会员权限。");
         return true;
     }
 
@@ -1267,13 +1354,33 @@ partial class Program
     /// <summary>
     /// 以已存在的输出文件为输入重新封装, 只写回元数据; 音视频流保持原样
     /// </summary>
-    private static bool RefreshExistingMetadata(
+    internal static bool RefreshExistingMetadata(
         MyOption myOption, string savePath, string desc, string title, string author, string episodeId,
-        string coverPath, string lang, List<Subtitle> subtitleInfo, List<ViewPoint>? points, long pubTime)
+        string coverPath, string lang, List<Subtitle> subtitleInfo, List<ViewPoint>? points, long pubTime,
+        Func<string[], string?>? readProbe = null, Func<IEnumerable<string>, int>? runFfmpeg = null)
     {
-        return MediaOutput.Write(savePath, staged => BBDownTMuxer.UpdateMetadata(savePath, staged,
-            desc, title, author, episodeId, coverPath, lang, subtitleInfo,
-            myOption.AudioOnly, points, pubTime, myOption.SimplyMux));
+        // 刷新关闭了元数据继承, 原文件里 --lang/字幕/作者拿不到的标签(音频语言、字幕标题、章节)
+        // 要先读回来, 否则一次刷新就把它们洗成 und/空。
+        var original = MediaProbe.ReadTags(savePath, readProbe);
+        if (original is null)
+            LogWarn($"未能读取 {savePath} 的原有标签与章节, 本次刷新只写接口给出的信息");
+        return MediaOutput.Write(savePath, staged =>
+        {
+            var code = BBDownTMuxer.UpdateMetadata(savePath, staged, desc, title, author, episodeId, coverPath, lang,
+                subtitleInfo, myOption.AudioOnly, points, pubTime, myOption.SimplyMux, original, runFfmpeg);
+            return code != 0 ? code : StagedDurationDiffers(original, staged, readProbe) ? 1 : 0;
+        });
+    }
+
+    /// <summary>
+    /// 刷新只改封装不动编码, 暂存文件时长必须与原文件一致; 对不上就丢弃暂存文件保住原文件
+    /// </summary>
+    private static bool StagedDurationDiffers(MediaProbe.FileTags? original, string stagedPath,
+        Func<string[], string?>? readProbe = null)
+    {
+        if (original is null || original.DurationSeconds <= 0) return false;
+        var staged = MediaProbe.DurationSeconds(stagedPath, readProbe);
+        return staged is not null && Math.Abs(staged.Value - original.DurationSeconds) > 0.5;
     }
 
     internal static bool CanUseProgressiveStream(MyOption myOption)

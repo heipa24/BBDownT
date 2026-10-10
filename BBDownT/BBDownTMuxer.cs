@@ -237,6 +237,47 @@ static partial class BBDownTMuxer
     }
 
     /// <summary>
+    /// 把原文件已有的容器/流级标签显式写回。刷新用 -map_metadata -1 关闭了继承,
+    /// 而音频语言、字幕标题这些信息在接口只返回试看片段时拿不回来, 不补就会把原文件的标签清成 und。
+    /// 参数排在最新解析出的标签之前, 同键由后者胜出。
+    /// </summary>
+    private static List<string> BuildPreservedMetadataArgs(MediaProbe.FileTags? preserved, bool hasPic,
+        bool audioOnly, int newSubtitleCount, bool simplyMux)
+    {
+        var args = new List<string>();
+        // --simply-mux 本来就不写描述/作者这类标签, 透传也保持关闭
+        if (preserved is null || simplyMux) return args;
+
+        foreach (var tag in preserved.FormatTags)
+            args.AddRange(["-metadata", $"{tag.Key}={tag.Value}"]);
+
+        foreach (var stream in preserved.Streams)
+        {
+            // 输出流序号与输入的对应关系由上面的 -map 决定, 这里必须跟着同一套规则
+            string? selector = stream.CodecType switch
+            {
+                // 纯音频换封面时不映射任何输入视频流
+                "video" when audioOnly && hasPic => null,
+                // 换封面只留主视频流, 旧封面流连同它的标签一起丢
+                "video" when hasPic && stream.IndexInType > 0 => null,
+                "video" => "v",
+                "audio" => "a",
+                // 有新字幕时旧字幕流不再映射, 其标签也不该套到新字幕头上
+                "subtitle" when newSubtitleCount == 0 => "s",
+                _ => null,
+            };
+            if (selector is null) continue;
+            foreach (var tag in stream.Tags)
+            {
+                // mp4 把字幕轨的标题读成 name, 但只认 title 这个写入键
+                var key = tag.Key.Equals("name", StringComparison.OrdinalIgnoreCase) ? "title" : tag.Key;
+                args.AddRange([$"-metadata:s:{selector}:{stream.IndexInType}", $"{key}={tag.Value}"]);
+            }
+        }
+        return args;
+    }
+
+    /// <summary>
     /// 以已存在的输出文件为唯一媒体输入, 用 -c copy 重新封装并写回最新元数据;
     /// 音视频流只做搬运, 不重新下载也不重新编码。
     /// </summary>
@@ -244,7 +285,8 @@ static partial class BBDownTMuxer
     /// <param name="stagedPath">暂存输出文件, 成功后由调用方原子替换</param>
     public static int UpdateMetadata(string inputPath, string stagedPath, string desc = "", string title = "", string author = "",
         string episodeId = "", string pic = "", string lang = "", List<Subtitle>? subs = null, bool audioOnly = false,
-        List<ViewPoint>? points = null, long pubTime = 0, bool simplyMux = false, Func<IEnumerable<string>, int>? runFfmpeg = null)
+        List<ViewPoint>? points = null, long pubTime = 0, bool simplyMux = false, MediaProbe.FileTags? preserved = null,
+        Func<IEnumerable<string>, int>? runFfmpeg = null)
     {
         var usableSubs = subs?.Where(s => File.Exists(s.path) && File.ReadAllText(s.path) != "").ToList() ?? [];
         var hasPic = !string.IsNullOrEmpty(pic) && File.Exists(pic);
@@ -274,12 +316,14 @@ static partial class BBDownTMuxer
         try
         {
             byte? chaptersIndex = null;
-            if (points != null && points.Count != 0)
+            // 接口没给章节时回读原文件里已有的, 否则刷新会把上次写进去的章节洗掉
+            var effectivePoints = points is { Count: > 0 } ? points : preserved?.Chapters;
+            if (effectivePoints is { Count: > 0 })
             {
                 // 刷新路径没有临时音视频目录, 章节元数据写到系统临时目录并在结束后删除;
                 // 写文件也放进 try: 写入中途失败时 finally 仍能清掉半截文件, 不留垃圾。
                 chaptersFile = Path.Combine(Path.GetTempPath(), $"bbdownt-chapters-{Guid.NewGuid():N}");
-                File.WriteAllText(chaptersFile, GetFFmpegMetaString(points));
+                File.WriteAllText(chaptersFile, GetFFmpegMetaString(effectivePoints));
                 chaptersIndex = inputCount++;
                 inputArgs.AddRange(["-i", chaptersFile]);
             }
@@ -310,6 +354,7 @@ static partial class BBDownTMuxer
             args.AddRange(inputArgs);
             args.AddRange(mapArgs);
             args.AddRange(metaArgs);
+            args.AddRange(BuildPreservedMetadataArgs(preserved, hasPic, audioOnly, usableSubs.Count, simplyMux));
             args.AddRange(BuildContainerMetadataArgs(desc, title, author, episodeId, lang, pubTime, simplyMux));
             args.AddRange(["-c:v", "copy", "-c:a", "copy"]);
             args.AddRange(["-c:s", usableSubs.Count == 0 ? "copy" : "mov_text"]);

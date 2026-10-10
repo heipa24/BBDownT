@@ -274,6 +274,13 @@ internal partial class Program
                 throw new Exception("找不到可执行的ffmpeg文件, --metadata-only 需要 ffmpeg");
             BBDownTMuxer.FFMPEG = binPath;
         }
+        // 刷新要把原文件的标签/章节读回来, 试看响应下还靠它校验完整性。缺 ffprobe 不在这里报错:
+        // 普通刷新只降级成警告, 试看刷新则在 CheckPreviewMetadataRefresh 里明确拒绝。
+        if (myOption.MetadataOnly && !myOption.SkipMux
+            && (string.IsNullOrEmpty(MediaProbe.FFPROBE) || !File.Exists(MediaProbe.FFPROBE)))
+        {
+            MediaProbe.FFPROBE = FindExecutable("ffprobe") ?? "ffprobe";
+        }
 
         //寻找aria2c: 默认使用内置下载器, 只有显式传入 --use-aria2c/-aria2 时才启用 aria2
         if (!ShouldUseAria2c(myOption))

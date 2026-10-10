@@ -6,6 +6,8 @@ public class ParsedResult
 {
     public string WebJsonString { get; set; } = string.Empty;
     public bool IsPreviewOnly { get; set; }
+    // 整集时长(秒), 取自 timelength 而非试看切片的 length
+    public int TotalDurationSeconds { get; set; }
     public List<Video> VideoTracks { get; set; } = new();
     public List<Audio> AudioTracks { get; set; } = new();
     public List<AudioLanguageInfo> AudioLanguages { get; set; } = new();
