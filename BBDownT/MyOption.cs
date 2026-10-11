@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 
 namespace BBDownT;
 
@@ -30,6 +30,15 @@ internal class MyOption
     public bool SkipSubtitle { get; set; }
     public bool SkipCover { get; set; }
     public bool MetadataOnly { get; set; }
+    /// <summary>
+    /// 只更新 bbdown.json 元数据, 不调 playurl、不写任何媒体文件; 与 update-downloaded 配合可迁移旧目录。
+    /// </summary>
+    public bool JsonOnly { get; set; }
+    /// <summary>
+    /// json-only 模式的写出目录: ud 场景由 BuildChild 直通 bbdown.json 所在目录, 免疫文件名模板漂移。
+    /// 不来自命令行, 故 internal 不进 API JSON。
+    /// </summary>
+    internal string? BbdownJsonDir { get; set; }
     public bool ForceHttp { get; set; } = true;
     public bool DownloadDanmaku { get; set; } = false;
     public string? DownloadDanmakuFormats { get; set; }
@@ -87,6 +96,7 @@ internal class MyOption
         copy.WorkDir = workDir;
         // 追更的单次限制不随批量复制扩散
         copy.UpdateRecordedPages = null;
+        copy.BbdownJsonDir = null;
         // SetUpWork has already normalized these legacy switches on the parent.
         // Replaying them would append filename suffixes or proxy arguments again.
         copy.AddDfnSubfix = false;

@@ -665,10 +665,19 @@ partial class Program
             ? RetainRecordedPages(vInfo, recorded)
             : GetSelectedPages(myOption, vInfo, input);
         Log($"共计 {vInfo.PagesInfo.Count} 个分P, 已选择：" + (selectedPages == null ? "ALL" : string.Join(",", selectedPages)));
-        var markers = BuildBbdownMarkers(myOption, downloadDanmaku, downloadDanmakuFormats);
 
         var plan = PageDownloadPlan.Create(
             vInfo, myOption, selectedPages, SinglePageDefaultSavePath, MultiPageDefaultSavePath);
+
+        // --json-only: 只更新 bbdown.json, 全程不进 playurl/下载链路, 会员过期也能迁移旧目录
+        if (myOption.JsonOnly)
+        {
+            UpdateBbdownJsonOnly(myOption, vInfo, plan.Pages, plan.SavePathFormat, input, apiType);
+            return;
+        }
+
+        var markers = BuildBbdownMarkers(myOption, downloadDanmaku, downloadDanmakuFormats);
+
         var runner = new PageDownloadRunner(
             CheckAidFromFile, SaveAidToFile,
             milliseconds => Task.Delay(milliseconds), message => Log(message));
@@ -799,6 +808,8 @@ partial class Program
             }
 
             var savePath = "";
+            // bbdown.json 的分P级写值上下文: DASH 分支来自选中轨道, DURL 分支没有轨道信息
+            BbdownPageDetails? pageDetails = null;
 
             var downloadConfig = new DownloadConfig()
             {
@@ -875,6 +886,9 @@ partial class Program
                     savePath = savePath[..^4] + ".m4a";
                 LogDebug("Format After: " + savePath);
 
+                // 试看响应里的轨道是试看级别的, 不能当作当初下载的流写进 bbdown.json; view 级字段不受影响
+                pageDetails = BbdownPageDetails.From(p, selectedVideo, selectedAudio, includeStream: !parsedResult.IsPreviewOnly, myOption);
+
                 if (downloadDanmaku)
                 {
                     var danmakuXmlPath = Path.ChangeExtension(savePath, ".xml");
@@ -920,7 +934,7 @@ partial class Program
 
                     if (myOption.DanmakuOnly)
                     {
-                        WriteBbdownMetadata(savePath, input, title, p.index, markers);
+                        WriteBbdownMetadata(savePath, input, title, p, markers, pageDetails);
                         DeleteEmptyDownloadDirectory(p.aid);
                         return DownloadPageOutcome.ExclusiveArtifact;
                     }
@@ -964,7 +978,7 @@ partial class Program
                 {
                     return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "", episodeId,
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
-                        input, p.index, p.aid, markers, relatedTask);
+                        input, p, pageDetails, markers, relatedTask);
                 }
 
                 if (StopPreviewMediaDownload(parsedResult)) return DownloadPageOutcome.Failed;
@@ -1080,12 +1094,14 @@ partial class Program
                 savePath = FormatSavePath(savePathFormat, title, parsedResult.VideoTracks.FirstOrDefault(), null, p, pagesCount, apiType, pubTime);
                 if (myOption.AudioOnly && !myOption.VideoOnly)
                     savePath = savePath[..^4] + ".m4a";
+                // DURL/分段流没有可选轨道, 只写 view 级字段; 试看响应同样不写流级信息
+                pageDetails = BbdownPageDetails.From(p, null, null, includeStream: !parsedResult.IsPreviewOnly, myOption);
                 if (IsUsableArtifact(savePath))
                 {
                     return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "",
                         (pagesCount > 1 || (bangumi && !vInfo.IsBangumiEnd)) ? p.title : "",
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
-                        input, p.index, p.aid, markers, relatedTask);
+                        input, p, pageDetails, markers, relatedTask);
                 }
                 if (StopPreviewMediaDownload(parsedResult)) return DownloadPageOutcome.Failed;
                 var pad = string.Empty.PadRight(clips.Count.ToString().Length, '0');
@@ -1142,7 +1158,7 @@ partial class Program
             }
 
             if (!string.IsNullOrWhiteSpace(savePath)) {
-                WriteBbdownMetadata(savePath, input, title, p.index, markers);
+                WriteBbdownMetadata(savePath, input, title, p, markers, pageDetails);
                 relatedTask?.AddSavePath(savePath);
             }
             return DownloadPageOutcome.Completed;
@@ -1327,7 +1343,7 @@ partial class Program
     private static DownloadPageOutcome HandleExistingOutput(
         MyOption myOption, string savePath, string desc, string title, string author, string episodeId,
         string coverPath, string lang, List<Subtitle> subtitleInfo, List<ViewPoint>? points, long pubTime,
-        string input, int pageIndex, string aid, BbdownMarkers markers, DownloadTask? relatedTask)
+        string input, Page p, BbdownPageDetails? pageDetails, BbdownMarkers markers, DownloadTask? relatedTask)
     {
         var outcome = DownloadPageOutcome.AlreadyExists;
         if (ShouldRefreshExistingMetadata(myOption, savePath))
@@ -1353,12 +1369,12 @@ partial class Program
         if (outcome.IsSuccessful())
         {
             relatedTask?.AddSavePath(savePath);
-            WriteBbdownMetadata(savePath, input, title, pageIndex, markers);
+            WriteBbdownMetadata(savePath, input, title, p, markers, pageDetails);
         }
         // coverPath 在未下载封面时为空串, 直接 Delete 会抛异常
         if (!string.IsNullOrEmpty(coverPath)) File.Delete(coverPath);
         foreach (var s in subtitleInfo.Where(s => !string.IsNullOrEmpty(s.path))) File.Delete(s.path);
-        DeleteEmptyDownloadDirectory(aid);
+        DeleteEmptyDownloadDirectory(p.aid);
         return outcome;
     }
 

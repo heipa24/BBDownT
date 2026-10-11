@@ -533,17 +533,21 @@ BBDownT --sub-only -ia --skip-ai false "https://www.bilibili.com/video/BV1qt4y1X
 
 下载时写出的 `bbdown.json` 现在还会记录本次用法：显式给了 `-p` 时记为 `selectPage`，开了 `-dd` 时把生效的弹幕格式记为 `danmakuFormats`。`update-downloaded`（短名 `ud`）就是靠这两个字段判断"这个目录当初是怎么下的、要不要顺带刷弹幕"，然后按记录的来源链接重跑一次下载。已下完的集会被既有的"输出文件已存在则跳过"逻辑跳过，因此一次追更只会补下新集。两个标记只增不清：`selectPage` 记成 `ALL` 之后，后来单独补下一集（`-p 3`）不会把它降级回窄范围，`danmakuFormats` 也不会因为某次没带 `-dd` 而消失。
 
-`bbdown.json` 的完整结构（脚本也可以直接读它定位来源）：
+`bbdown.json` 的完整结构（脚本也可以直接读它定位来源）。带 `version` 字段判别结构版本（当前为 `2`）；程序合并写入时会原样保留它不认识的键（顶层与 `pages[]` 条目两级都是），外部脚本可以放心往 `extra` 扩展位里写自己的数据：
 
 | 键 | 说明 |
 | --- | --- |
+| `version` | 结构版本，当前为 `2`；旧版文件在下次写入时自动升级 |
 | `sourceId` | 原样记录的下载输入（链接或 `av`/`BV`/`ep`/`ss`） |
 | `url` | 由 `sourceId` 归一出的来源链接，追更重跑用的就是它；两者都没有时该目录会被追更跳过 |
 | `title` | 视频/番剧标题 |
 | `updatedAt` | 最近一次写入时间（含时区偏移） |
 | `selectPage` | 当初显式传入的 `-p`，如 `ALL`、`1,3-5`；没传过 `-p` 则不写 |
 | `danmakuFormats` | 当初下载的弹幕格式，如 `xml,ass`；没下过弹幕则不写 |
-| `pages[]` | 每个分P一条：`page` 分P序号、`file` 成品文件名、`xml`/`ass` 弹幕文件名（磁盘上存在才写） |
+| `media` | view 级媒体元数据：`aid`、`bvid`、`epid`、`ownerName`、`pubTime`（unix 秒）；只写拿到的键 |
+| `download` | 可重放的下载参数快照：`filePattern`、`multiFilePattern`、`encodingPriority`、`dfnPriority`、`audioLanguage`、`subtitleLanguage`、`aria2c`；默认值（空串/false）不写，缺省即默认 |
+| `pages[]` | 每个分P一条：`page` 分P序号、`file` 成品文件名、`xml`/`ass` 弹幕文件名（磁盘上存在才写）、`title`/`cid`/`dur`/`res` view 级分P数据、`quality`/`fps`/`codecs`/`audioCodecs` 实际选中的流信息（试看响应时不写，保留旧值） |
+| `extra` | 自由扩展位：程序从不生成也从不删除，供外部脚本使用 |
 
 `ud` 的位置参数是**目录**，不接视频地址；链接一律从各目录的 `bbdown.json` 读取，省略位置参数时依次回落到 `--work-dir` 与当前目录。
 
@@ -560,6 +564,9 @@ BBDownT ud "D:\Anime" --danmaku-only
 # 只刷新已下载集的元数据（标题/简介/章节/字幕）
 BBDownT ud "D:\Anime" --metadata-only
 
+# 只更新 bbdown.json 本身: 补全 version/media/download 等新字段、登记新集, 不下载任何媒体
+BBDownT ud "D:\Anime" --json-only
+
 # 干跑: 只打印每个目录将执行什么，不落盘
 BBDownT ud "D:\Anime" --only-show-info
 ```
@@ -570,6 +577,7 @@ BBDownT ud "D:\Anime" --only-show-info
 - 弹幕刷新需要 `danmakuFormats` 存在（当初用了 `-dd`）**或** 每个分P都记载了 `xml`/`ass`（旧版文件的证据）。显式带上 `-dd` 时所有入选目录都会刷弹幕。当初带 `-dd` 下载的目录，追更时下的新集会自带弹幕。
 - 入选目录若标记为全集下载（或旧文件的分P数大于1），追更会自动按 `-p ALL` 执行以取到新集；显式传入的 `-p` 优先。
 - `--danmaku-only` 与 `--metadata-only` 是"只刷新已下载条目"的独占模式：只处理 `bbdown.json` 里已记载的那些分P，不会去取新集。`--sub-only`、`--cover-only`、`--video-only`、`--audio-only`、`--download-all`、`--interactive` 与 `ud` 同时使用会直接报错。
+- `--json-only` 是迁移模式：只把各目录的 `bbdown.json` 更新到最新结构（补全 `version`/`media`/`download` 与分P的 `cid`/`title` 等字段、登记新集），全程不调播放接口、不写任何媒体文件。与 `--danmaku-only`/`--metadata-only` 互斥；根命令 `BBDownT <视频> --json-only` 也可以单独为一个视频登记元数据。
 - 独占模式下记载的集号若在当前接口里已经不存在（撤集、`ss` 重新映射到别的季、目录改名），只会告警跳过该集，不影响该目录的其余分P。
 
 执行位置由传入的目录决定，恒为"含 `bbdown.json` 的目录的父目录"：默认多P模板把成品写在 `视频标题\[P01]分P标题.mp4` 下，只有在这个父目录里执行才会命中既有成品并跳过。因此把番剧目录本身传给 `ud` 与把它的父目录传给 `ud` 是等价的，后者只是会顺带处理兄弟目录。
@@ -577,6 +585,8 @@ BBDownT ud "D:\Anime" --only-show-info
 追更时如果上游改了标题、或自定义的 `-F`/`-M` 与当初下载时不一致，程序会拼出另一个文件名而认不出既有成品，从而重下一遍；保持与当初一致的模板就不会出现这种情况。
 
 逐目录串行执行，目录之间等待 `--delay-per-video`（默认 10 秒）；单个目录失败只记录并继续，结束时汇总"成功 n，失败 f"，有失败则以非零码退出。旧版 `bbdown.json` 在首次追更后会被自动补写上新字段。
+
+**大会员过期后的迁移**：`bbdown.json` 的全部字段要么来自视频/番剧详情接口（`media`、分P 的 `cid`/`title`/`dur`），要么来自本地命令行参数（`download`），都不经过受会员权限限制的播放接口。因此大会员时期下载的目录，会员过期后用 `BBDownT ud <目录> --json-only` 也能完整迁移到新结构；`--metadata-only` 对这类目录同样可用（接口只返回试看片段时会先用 ffprobe 校验既有文件是完整正片再刷新）。唯一拿不到的是流级字段（`quality`/`fps`/`codecs`），已有旧值会保留、没有则缺省，不影响追更。
 
 </details>
 

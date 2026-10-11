@@ -38,6 +38,54 @@ internal partial class Program
         downloadDanmaku ? string.Join(',', formats.Select(f => f.ToString().ToLower())) : null);
 
     /// <summary>
+    /// bbdown.json 顶层 media 对象的来源：全部取自 view/season 接口的 Page 数据，不经过 playurl，
+    /// 因此不依赖会员权限, 试看响应也能正常写出。
+    /// </summary>
+    internal sealed record BbdownMediaInfo(string? Aid, string? Bvid, string? Epid, string? OwnerName, long? PubTime);
+
+    /// <summary>
+    /// 分P的流级信息, 全部来自 playurl 选中的轨道。试看响应里的这些值不代表当初下载时的流,
+    /// 所以 includeStream=false 时整体缺席(已记录的旧值由合并逻辑保留)。
+    /// </summary>
+    internal sealed record BbdownStreamInfo(string? Quality, string? Fps, string? VideoCodecs, string? AudioCodecs);
+
+    /// <summary>
+    /// bbdown.json 顶层 download 对象: 可重放的下载参数快照, 供未来追更/脚本复原当初的下载方式。
+    /// 默认值(空串/false)不落盘, 缺省即默认。
+    /// </summary>
+    internal sealed record BbdownDownloadOptions(
+        string? FilePattern, string? MultiFilePattern, string? EncodingPriority, string? DfnPriority,
+        string? AudioLanguage, string? SubtitleLanguage, bool UseAria2c)
+    {
+        internal static BbdownDownloadOptions From(MyOption o) => new(
+            o.FilePattern, o.MultiFilePattern, o.EncodingPriority, o.DfnPriority,
+            o.AudioLanguage, o.SubtitleLanguage, o.UseAria2c);
+    }
+
+    /// <summary>
+    /// 写 bbdown.json 所需的分P级上下文: media/download 快照 + 本分P的流级信息(可为 null)。
+    /// </summary>
+    internal sealed record BbdownPageDetails(BbdownMediaInfo? Media, BbdownStreamInfo? Stream, BbdownDownloadOptions? Download)
+    {
+        /// <summary>
+        /// includeStream=false 表示本次没有可信的流信息(试看响应或未走 playurl), 流级键一律不写。
+        /// </summary>
+        internal static BbdownPageDetails From(Page p, Video? video, Audio? audio, bool includeStream, MyOption? option) => new(
+            new BbdownMediaInfo(p.aid, p.bvid, p.epid, p.ownerName, p.pubTime),
+            includeStream && video is not null
+                ? new BbdownStreamInfo(video.dfn, video.fps, video.codecs, audio?.codecs)
+                : null,
+            option is null ? null : BbdownDownloadOptions.From(option));
+    }
+
+    /// <summary>
+    /// pages[] 里一个分P条目的本次写值: file/xml/ass 为产物映射(缺省保留旧值),
+    /// title/cid/dur/res 为 view 级分P数据(始终可写)。
+    /// </summary>
+    internal readonly record struct BbdownPageUpdate(
+        int Page, string? Title, string? Cid, int? Dur, string? Res, string? File, string? Xml, string? Ass);
+
+    /// <summary>
     /// selectPage 的 ALL 是"这套内容当初按全集下载"的追更凭证，一旦被记下就不该因为某次 -p 3 的单集重跑而降级；
     /// 反过来，把窄范围记成 ALL 才是需要修正的方向。
     /// </summary>
@@ -46,84 +94,198 @@ internal partial class Program
         && (UpdateDownloaded.IsAllPages(incoming) || !UpdateDownloaded.IsAllPages(recorded));
 
     /// <summary>
-    /// 写出/合并 bbdown.json 元数据(来源链接 + 分P文件映射 + 下载用法标记)到输出文件所在目录, 供后续更新脚本定位来源。
+    /// 写出/合并 bbdown.json 元数据(来源链接 + 分P文件映射 + 下载用法标记 + v2 媒体/下载参数快照)
+    /// 到输出文件所在目录, 供后续更新脚本定位来源。
     /// 尽力而为: 任何异常静默吞掉, 绝不影响下载主流程。
     /// </summary>
-    internal static void WriteBbdownMetadata(string savePath, string sourceId, string title, int page, BbdownMarkers markers)
+    internal static void WriteBbdownMetadata(string savePath, string sourceId, string title, Page p, BbdownMarkers markers, BbdownPageDetails? details)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(savePath)) return;
             var dir = Path.GetDirectoryName(Path.GetFullPath(savePath));
             if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return;
-            var metaPath = Path.Combine(dir, "bbdown.json");
+            var baseName = Path.GetFileNameWithoutExtension(savePath);
+            var xmlPath = Path.ChangeExtension(savePath, ".xml");
+            var assPath = Path.ChangeExtension(savePath, ".ass");
 
-            lock (BbdownMetadataLock)
+            var update = new BbdownPageUpdate(
+                p.index, p.title, p.cid, p.dur, p.res,
+                Path.GetFileName(savePath),
+                File.Exists(xmlPath) ? baseName + ".xml" : null,
+                File.Exists(assPath) ? baseName + ".ass" : null);
+            UpdateBbdownMetadata(dir, sourceId, title, markers, details, [update]);
+        }
+        catch
+        {
+            // 元数据写入失败不影响下载
+        }
+    }
+
+    /// <summary>
+    /// 读-改-写 bbdown.json 的核心: 合并来源、用法标记、v2 媒体/下载参数快照与分P条目。
+    /// pageUpdates 里本次没给出的键一律保留旧值(如 json-only 不写 file、试看响应不写流级键);
+    /// 双方都不认识的键(顶层与分P条目两级)原样保留, 保证外部脚本写入的扩展数据不被洗掉。
+    /// </summary>
+    internal static void UpdateBbdownMetadata(string dir, string? sourceId, string? title,
+        BbdownMarkers markers, BbdownPageDetails? details, IReadOnlyList<BbdownPageUpdate> pageUpdates)
+    {
+        lock (BbdownMetadataLock)
+        {
+            var metaPath = Path.Combine(dir, BbdownMetadataReader.FileName);
+            JsonObject root;
+            if (File.Exists(metaPath))
             {
-                var baseName = Path.GetFileNameWithoutExtension(savePath);
-                var xmlPath = Path.ChangeExtension(savePath, ".xml");
-                var assPath = Path.ChangeExtension(savePath, ".ass");
+                try { root = JsonNode.Parse(File.ReadAllText(metaPath))!.AsObject(); }
+                catch { root = new JsonObject(); }
+            }
+            else
+            {
+                root = new JsonObject();
+            }
 
-                JsonObject root;
-                if (File.Exists(metaPath))
-                {
-                    try { root = JsonNode.Parse(File.ReadAllText(metaPath))!.AsObject(); }
-                    catch { root = new JsonObject(); }
-                }
-                else
-                {
-                    root = new JsonObject();
-                }
+            root["version"] = 2;
+            root["sourceId"] = sourceId ?? "";
+            if (!string.IsNullOrWhiteSpace(sourceId))
+            {
+                var sid = sourceId.Trim();
+                if (sid.StartsWith("http", StringComparison.OrdinalIgnoreCase)) root["url"] = sid;
+                else if (sid.StartsWith("ss", StringComparison.OrdinalIgnoreCase) || sid.StartsWith("ep", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/bangumi/play/{sid}";
+                else if (sid.StartsWith("BV", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/video/{sid}/";
+                else if (sid.StartsWith("av", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/video/{sid}";
+            }
+            if (!string.IsNullOrWhiteSpace(title)) root["title"] = title;
+            root["updatedAt"] = DateTimeOffset.Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz");
+            // 只在本次确实用了 -p / -dd 时记录, 缺省保留旧值: 一次不带 -dd 的重跑不该把弹幕标记洗掉
+            if (!string.IsNullOrWhiteSpace(markers.DanmakuFormats)) root["danmakuFormats"] = markers.DanmakuFormats;
+            // 单独补下某一集(-p 5)不该把"这套是按全集下载的"抹掉, 否则该目录下次不会自动追更
+            var recordedPage = root["selectPage"] is JsonValue pageNode && pageNode.TryGetValue<string>(out var pageText) ? pageText : null;
+            if (ShouldRecordSelectPage(recordedPage, markers.SelectPage)) root["selectPage"] = markers.SelectPage;
 
-                root["sourceId"] = sourceId ?? "";
-                if (!string.IsNullOrWhiteSpace(sourceId))
-                {
-                    var sid = sourceId.Trim();
-                    if (sid.StartsWith("http", StringComparison.OrdinalIgnoreCase)) root["url"] = sid;
-                    else if (sid.StartsWith("ss", StringComparison.OrdinalIgnoreCase) || sid.StartsWith("ep", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/bangumi/play/{sid}";
-                    else if (sid.StartsWith("BV", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/video/{sid}/";
-                    else if (sid.StartsWith("av", StringComparison.OrdinalIgnoreCase)) root["url"] = $"https://www.bilibili.com/video/{sid}";
-                }
-                if (!string.IsNullOrWhiteSpace(title)) root["title"] = title;
-                root["updatedAt"] = DateTimeOffset.Now.ToString("yyyy-MM-dd'T'HH:mm:sszzz");
-                // 只在本次确实用了 -p / -dd 时记录, 缺省保留旧值: 一次不带 -dd 的重跑不该把弹幕标记洗掉
-                if (!string.IsNullOrWhiteSpace(markers.DanmakuFormats)) root["danmakuFormats"] = markers.DanmakuFormats;
-                // 单独补下某一集(-p 5)不该把"这套是按全集下载的"抹掉, 否则该目录下次不会自动追更
-                var recordedPage = root["selectPage"] is JsonValue pageNode && pageNode.TryGetValue<string>(out var pageText) ? pageText : null;
-                if (ShouldRecordSelectPage(recordedPage, markers.SelectPage)) root["selectPage"] = markers.SelectPage;
+            // media: view 级元数据, 合并进既有子对象, 未知键保留
+            var media = root["media"] as JsonObject ?? new JsonObject();
+            if (details?.Media is { } m)
+            {
+                SetIfHasText(media, "aid", m.Aid);
+                SetIfHasText(media, "bvid", m.Bvid);
+                SetIfHasText(media, "epid", m.Epid);
+                SetIfHasText(media, "ownerName", m.OwnerName);
+                if (m.PubTime is > 0) media["pubTime"] = (JsonNode)JsonValue.Create(m.PubTime.Value);
+            }
+            if (media.Count > 0) root["media"] = media;
 
-                var pages = root["pages"] as JsonArray ?? new JsonArray();
-                var entry = new JsonObject { ["page"] = page, ["file"] = Path.GetFileName(savePath) };
-                if (File.Exists(xmlPath)) entry["xml"] = baseName + ".xml";
-                if (File.Exists(assPath)) entry["ass"] = baseName + ".ass";
+            // download: 可重放参数快照, "最新非默认值覆盖"; 默认值(空串/false)不落盘
+            var download = root["download"] as JsonObject ?? new JsonObject();
+            if (details?.Download is { } d)
+            {
+                SetIfHasText(download, "filePattern", d.FilePattern);
+                SetIfHasText(download, "multiFilePattern", d.MultiFilePattern);
+                SetIfHasText(download, "encodingPriority", d.EncodingPriority);
+                SetIfHasText(download, "dfnPriority", d.DfnPriority);
+                SetIfHasText(download, "audioLanguage", d.AudioLanguage);
+                SetIfHasText(download, "subtitleLanguage", d.SubtitleLanguage);
+                if (d.UseAria2c) download["aria2c"] = true;
+            }
+            if (download.Count > 0) root["download"] = download;
 
+            var pages = root["pages"] as JsonArray ?? new JsonArray();
+            foreach (var update in pageUpdates)
+            {
                 var replacedIdx = -1;
                 for (int i = 0; i < pages.Count; i++)
                 {
-                    if (pages[i] is JsonObject o && o["page"] is JsonValue pv1 && pv1.TryGetValue<int>(out var curPage) && curPage == page)
+                    if (pages[i] is JsonObject o && o["page"] is JsonValue pv1 && pv1.TryGetValue<int>(out var curPage) && curPage == update.Page)
                     {
                         replacedIdx = i;
                         break;
                     }
                 }
-                // 显式转成 JsonNode, 走非泛型 Add, 避免 JsonArray.Add<T> 触发 AOT/裁剪分析告警
-                if (replacedIdx >= 0) pages[replacedIdx] = entry; else pages.Add((JsonNode)entry);
-                var sorted = pages.OfType<JsonObject>().OrderBy(o => o["page"] is JsonValue pv2 && pv2.TryGetValue<int>(out var pn) ? pn : int.MaxValue).ToList();
-                var newPages = new JsonArray();
-                foreach (var o in sorted) newPages.Add((JsonNode)o.DeepClone());
-                root["pages"] = newPages;
-
-                var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-                MediaOutput.Write(metaPath, staged =>
+                // 替换条目时克隆旧对象再覆盖: 本次没写的键(如 file/xml/ass、旧流级信息)与未知键都随克隆保留
+                var entry = replacedIdx >= 0 && pages[replacedIdx] is JsonObject old
+                    ? (JsonObject)old.DeepClone()
+                    : new JsonObject();
+                entry["page"] = update.Page;
+                SetIfHasText(entry, "file", update.File);
+                SetIfHasText(entry, "xml", update.Xml);
+                SetIfHasText(entry, "ass", update.Ass);
+                SetIfHasText(entry, "title", update.Title);
+                SetIfHasText(entry, "cid", update.Cid);
+                SetIfHasText(entry, "res", update.Res);
+                if (update.Dur is > 0) entry["dur"] = (JsonNode)JsonValue.Create(update.Dur.Value);
+                if (details?.Stream is { } s)
                 {
-                    File.WriteAllText(staged, json);
-                    return 0;
-                });
+                    SetIfHasText(entry, "quality", s.Quality);
+                    SetIfHasText(entry, "fps", s.Fps);
+                    SetIfHasText(entry, "codecs", s.VideoCodecs);
+                    SetIfHasText(entry, "audioCodecs", s.AudioCodecs);
+                }
+                // 显式转成 JsonNode, 走非泛型 Add, 避免 AOT/裁剪分析告警
+                if (replacedIdx >= 0) pages[replacedIdx] = (JsonNode)entry; else pages.Add((JsonNode)entry);
             }
+            var sorted = pages.OfType<JsonObject>().OrderBy(o => o["page"] is JsonValue pv2 && pv2.TryGetValue<int>(out var pn) ? pn : int.MaxValue).ToList();
+            var newPages = new JsonArray();
+            foreach (var o in sorted) newPages.Add((JsonNode)o.DeepClone());
+            root["pages"] = newPages;
+
+            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+            MediaOutput.Write(metaPath, staged =>
+            {
+                File.WriteAllText(staged, json);
+                return 0;
+            });
         }
-        catch
+    }
+
+    private static void SetIfHasText(JsonObject obj, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value)) obj[key] = value;
+    }
+
+    /// <summary>
+    /// --json-only 模式: 只把 bbdown.json 更新/补全到最新结构, 不调 playurl、不写任何媒体文件。
+    /// 数据全部来自 view/season 接口(Page), 因此大会员过期后依然可以完成旧目录迁移;
+    /// 产物映射(file/xml/ass)与流级信息本次缺席, 由合并逻辑保留旧值。
+    /// </summary>
+    internal static void UpdateBbdownJsonOnly(MyOption myOption, VInfo vInfo, IReadOnlyList<Page> pages,
+        string savePathFormat, string input, string apiType)
+    {
+        try
         {
-            // 元数据写入失败不影响下载
+            if (pages.Count == 0) return;
+            var first = pages[0];
+
+            string dir;
+            if (!string.IsNullOrWhiteSpace(myOption.BbdownJsonDir))
+            {
+                // ud 场景: 直接写回当初发现 bbdown.json 的目录, 免疫文件名模板漂移
+                dir = myOption.BbdownJsonDir;
+            }
+            else
+            {
+                var title = ResolvePageTitle(vInfo, first);
+                if (title.EndsWith('.')) title += "_fix";
+                if (title.StartsWith('.')) title = "_" + title;
+                var savePath = FormatSavePath(savePathFormat, title, null, null, first, vInfo.PagesInfo.Count, apiType, vInfo.PubTime);
+                dir = Path.GetDirectoryName(Path.GetFullPath(savePath)) ?? "";
+            }
+            if (string.IsNullOrWhiteSpace(dir)) return;
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            if (myOption.OnlyShowInfo)
+            {
+                Log($"[干跑] 将更新 {Path.Combine(dir, BbdownMetadataReader.FileName)}: {pages.Count} 个分P (不下载媒体)");
+                return;
+            }
+
+            var details = BbdownPageDetails.From(first, null, null, includeStream: false, myOption);
+            var updates = pages.Select(pg => new BbdownPageUpdate(pg.index, pg.title, pg.cid, pg.dur, pg.res, null, null, null)).ToList();
+            // 迁移不改写用法标记: selectPage/danmakuFormats 保留目录里的历史值
+            UpdateBbdownMetadata(dir, input, ResolvePageTitle(vInfo, first), default, details, updates);
+            Log($"已更新 {Path.Combine(dir, BbdownMetadataReader.FileName)}: {updates.Count} 个分P (不下载媒体)");
+        }
+        catch (Exception ex)
+        {
+            LogWarn($"更新 bbdown.json 失败: {ex.Message}");
         }
     }
 
@@ -380,6 +542,18 @@ internal partial class Program
         if (myOption.MetadataOnly && myOption.UseMP4box)
         {
             LogDebug("--metadata-only 始终使用 ffmpeg 更新元数据, 不受 --use-mp4box 影响");
+        }
+        // json-only 只更新 bbdown.json, 其余独占模式都没有执行机会, 显式忽略避免误解
+        if (myOption.JsonOnly && (myOption.DanmakuOnly || myOption.MetadataOnly || myOption.SubOnly
+            || myOption.CoverOnly || myOption.VideoOnly || myOption.AudioOnly))
+        {
+            LogWarn("--json-only 只更新 bbdown.json, 已忽略同时给定的 --danmaku-only/--metadata-only/--sub-only/--cover-only/--video-only/--audio-only");
+            myOption.DanmakuOnly = false;
+            myOption.MetadataOnly = false;
+            myOption.SubOnly = false;
+            myOption.CoverOnly = false;
+            myOption.VideoOnly = false;
+            myOption.AudioOnly = false;
         }
     }
 

@@ -22,12 +22,14 @@ internal static class UpdateDownloaded
 
     internal static string? Validate(MyOption option)
     {
-        if (option.SubOnly) return "--sub-only 不能与 update-downloaded 同时使用, 追更只支持 --danmaku-only 与 --metadata-only";
-        if (option.CoverOnly) return "--cover-only 不能与 update-downloaded 同时使用, 追更只支持 --danmaku-only 与 --metadata-only";
+        if (option.SubOnly) return "--sub-only 不能与 update-downloaded 同时使用, 追更只支持 --danmaku-only、--metadata-only 与 --json-only";
+        if (option.CoverOnly) return "--cover-only 不能与 update-downloaded 同时使用, 追更只支持 --danmaku-only、--metadata-only 与 --json-only";
         if (option.VideoOnly || option.AudioOnly) return "--video-only/--audio-only 不能与 update-downloaded 同时使用: 已存在的成品文件会被直接跳过, 没有可更新的内容";
         if (option.DownloadAll) return "--download-all 与 update-downloaded 不能同时使用";
         if (option.Interactive) return "update-downloaded 逐目录自动执行, 不支持 --interactive";
         if (option.DanmakuOnly && option.MetadataOnly) return "--danmaku-only 与 --metadata-only 不能同时使用";
+        if (option.JsonOnly && (option.DanmakuOnly || option.MetadataOnly))
+            return "--json-only 只更新 bbdown.json, 不能与 --danmaku-only/--metadata-only 同时使用";
         return null;
     }
 
@@ -116,6 +118,9 @@ internal static class UpdateDownloaded
         child.DownloadDanmaku = ShouldRefreshDanmaku(metadata, parent.DownloadDanmaku);
         if (IsArtifactOnlyUpdate(parent))
             child.UpdateRecordedPages = metadata.Pages.Select(page => page.Page).ToList();
+        // json-only 是迁移语义: 更新全部分P(含新集), 写回当初发现 bbdown.json 的目录
+        if (parent.JsonOnly)
+            child.BbdownJsonDir = metadata.Dir;
         return child;
     }
 
@@ -151,10 +156,12 @@ internal static class UpdateDownloaded
             if (index > 0 && parent.DelayPerVideo > 0) await wait(checked(parent.DelayPerVideo * 1000));
 
             var metadata = found[index];
-            var scope = IsArtifactOnlyUpdate(parent)
-                ? $"已记载分P {string.Join(',', metadata.Pages.Select(p => p.Page))}"
-                : "全集";
-            var danmaku = ShouldRefreshDanmaku(metadata, parent.DownloadDanmaku) ? "刷新" : "跳过";
+            var scope = parent.JsonOnly
+                ? "仅更新 bbdown.json"
+                : IsArtifactOnlyUpdate(parent)
+                    ? $"已记载分P {string.Join(',', metadata.Pages.Select(p => p.Page))}"
+                    : "全集";
+            var danmaku = parent.JsonOnly ? "不涉及" : ShouldRefreshDanmaku(metadata, parent.DownloadDanmaku) ? "刷新" : "跳过";
             Log($"追更 {index + 1}/{found.Count}: {metadata.Dir} <- {metadata.Url} (弹幕: {danmaku}, 范围: {scope})");
             try
             {

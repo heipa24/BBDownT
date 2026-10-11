@@ -244,6 +244,24 @@ public class UpdateDownloadedTests : IDisposable
         Assert.Null(UpdateDownloaded.Validate(new MyOption { OnlyShowInfo = true }));
         Assert.Null(UpdateDownloaded.Validate(new MyOption { DanmakuOnly = true }));
         Assert.Null(UpdateDownloaded.Validate(new MyOption { MetadataOnly = true }));
+        Assert.Null(UpdateDownloaded.Validate(new MyOption { JsonOnly = true }));
+    }
+
+    [Fact]
+    public void Validate_RejectsJsonOnlyWithArtifactRefreshModes()
+    {
+        Assert.NotNull(UpdateDownloaded.Validate(new MyOption { JsonOnly = true, DanmakuOnly = true }));
+        Assert.NotNull(UpdateDownloaded.Validate(new MyOption { JsonOnly = true, MetadataOnly = true }));
+    }
+
+    [Fact]
+    public void BuildChild_JsonOnly_TargetsTheMetadataDirectory_AndKeepsAllPages()
+    {
+        var child = UpdateDownloaded.BuildChild(new MyOption { JsonOnly = true }, Metadata(3, "ALL"), root);
+
+        Assert.True(child.JsonOnly);
+        Assert.Equal("/anime", child.BbdownJsonDir);
+        Assert.Null(child.UpdateRecordedPages);
     }
 
     [Fact]

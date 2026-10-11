@@ -6,7 +6,7 @@
 
 - CLI：`BBDownT update-downloaded [<目录>] [根命令的全部选项]`，短名 `ud`。`<目录>` 缺省为当前目录（回落顺序：位置参数 → `--work-dir` → 当前目录）。
 - 无 HTTP 入口：扫描目录不落在 `MyOption` 上，`ServeRequestOptions` 继承不到它，服务器任务无法触发追更。
-- 只支持两种独占刷新模式：`--danmaku-only`（只刷弹幕）与 `--metadata-only`（只刷元数据）。`--sub-only`/`--cover-only`/`--video-only`/`--audio-only`/`--download-all`/`--interactive` 在 `UpdateDownloaded.Validate` 里直接拒绝；`--only-show-info` 允许当干跑。
+- 独占刷新模式：`--danmaku-only`（只刷弹幕）、`--metadata-only`（只刷元数据）与 `--json-only`（只迁移 bbdown.json，见下文）。`--sub-only`/`--cover-only`/`--video-only`/`--audio-only`/`--download-all`/`--interactive` 在 `UpdateDownloaded.Validate` 里直接拒绝；`--only-show-info` 允许当干跑。
 
 ## bbdown.json 的两个新字段
 
@@ -20,6 +20,44 @@
 不写 `null`/`false`：写元数据总是先读回既有 JSON 再合并，缺省即保留历史值，因此一次不带 `-dd` 的重跑不会把已记录的弹幕标记抹掉。`selectPage` 额外只增不降级（`ShouldRecordSelectPage`）：记成 `ALL` 之后，用户单独补下一集（`-p 3`）会把 `3` 写回来，但那等于把目录从"按全集下载过"里踢出去，之后 `ud` 不再自动追更它，所以 `ALL` 粘性保留。三个调用点（`--danmaku-only` 分支、正常下载完成、`HandleExistingOutput`）都收到同一份 markers，所以旧目录在首次追更时即被补写新字段。
 
 `BbdownMarkers` 挂在 `DownloadPagesAsync` 里构造，因为"本次是否覆盖全部分P"只有在那里才知道（`GetSelectedPages` 返回 `null` 即 ALL）；`downloadDanmaku` 本来就是 `DownloadPageAsync` 的入参。
+
+## bbdown.json v2 结构（2026-10-11 扩展）
+
+写键核心收敛为 `Program.UpdateBbdownMetadata(dir, sourceId, title, markers, details, pageUpdates)`，`WriteBbdownMetadata` 是它的"单文件条目"封装。新增键与写值规则：
+
+| 键 | 值 | 来源 | 写值规则 |
+|---|---|---|---|
+| `version` | `2` | 固定 | 每次写出都置 2，旧 v1 文件合并写入时自动升级 |
+| `media.aid/bvid/epid/ownerName/pubTime` | view 级媒体元数据 | `Page`（view/season 接口） | 非空/`pubTime>0` 才写；合并进既有子对象 |
+| `download.filePattern/multiFilePattern/encodingPriority/dfnPriority/audioLanguage/subtitleLanguage/aria2c` | 可重放参数快照 | `BbdownDownloadOptions.From(MyOption)` | 空串/false 不写；"最新非默认值覆盖"，第二次没给则保留旧值 |
+| `pages[].title/cid/dur/res` | view 级分P数据 | `Page` | 始终可写（json-only/试看响应也有） |
+| `pages[].quality/fps/codecs/audioCodecs` | 实际选中流 | playurl 选中的 `Video`/`Audio` | 试看响应（`parsedResult.IsPreviewOnly`）时不写，保留旧值 |
+| `extra` | 自由扩展位 | — | 程序从不生成、从不删除 |
+
+合并兼容性：`pages[]` 条目替换改为"克隆旧 JsonObject → 覆盖本次有值键 → 放回"，所以本次缺席的键（旧 `file`、旧流级信息）与双方都不认识的键（顶层与条目两级）都原样保留，外部脚本写入的数据不会被洗掉。
+
+载体类型（均在 `Program` 内）：`BbdownPageDetails(Media, Stream, Download)` 每分P构造一次，`From(p, video, audio, includeStream, option)`；`includeStream=false` 表示本次没有可信的流信息。`DownloadPageAsync` 在试看校验之后构造，DASH 分支用选中轨道、DURL 分支没有轨道信息。
+
+## --json-only 迁移模式
+
+`BBDownT ud <目录> --json-only`（或根命令 `BBDownT <视频> --json-only`）：只更新 `bbdown.json`，不调 playurl、不写任何媒体文件。
+
+- **实现**：`DownloadPagesAsync` 在 plan 计算后、runner 之前早退（`Program.UpdateBbdownJsonOnly`）。页集合复用 `plan.Pages`（显式 `-p` 可收窄，缺省全集，新集也会建无 `file` 条目）。
+- **目标目录**：ud 场景由 `BuildChild` 直通 `metadata.Dir`（`MyOption.BbdownJsonDir`，`ForBatchVideo` 会重置），免疫 `-F/-M` 漂移；根命令场景回落 `FormatSavePath` 推导。
+- **语义**：迁移不改写用法标记（markers 传 `default`，`selectPage`/`danmakuFormats` 保留历史值）；`--only-show-info` 下是干跑不落盘；与 `--danmaku-only`/`--metadata-only` 互斥（`UpdateDownloaded.Validate`），与其他独占模式同给时 `HandleConflictingOptions` 显式忽略。它不算 artifact-only 模式，更新的是全部分P。
+
+## 大会员门槛分析（为什么 json-only 无需大会员）
+
+`bbdown.json` 的全部数据只有两个来源，都不经过 playurl：
+
+1. **view/season 接口**（`VInfo`/`PagesInfo`）：`media` 各键与 `pages[].title/cid/dur/res`。`Page` 自带 `aid/cid/epid/title/dur/res/pubTime/ownerName/bvid`（`Entity.cs`），这些不是会员门槛数据。
+2. **本地命令行参数**（`MyOption`）：`download` 快照与 markers。
+
+playurl（`ExtractTracksAsync`，每分P内调用）才是会员门槛：无大会员时会员番剧返回 `IsPreviewOnly` 试看片段。因此：
+
+- `--json-only` 全程不进 playurl → 无大会员（甚至无登录）即可完成旧目录迁移。
+- `--metadata-only` 借 `CheckPreviewMetadataRefresh` 的 ffprobe 时长校验（既有文件时长 ≥ 整集，1% 容差）对完整正片放行 ffmpeg 元数据刷新，同样可用。
+- 唯一拿不到的是流级字段（`quality/fps/codecs/audioCodecs`）；试看响应绝不能把这些值写进 bbdown.json（它们不代表当初下载的流），合并语义下旧值保留、无值缺省，不影响追更。
 
 ## 扫描与筛选
 

@@ -55,6 +55,23 @@ public class CommandLineInvokerTests
     }
 
     [Fact]
+    public async Task JsonOnlyOption_IsRegisteredAndBound()
+    {
+        MyOption? boundOption = null;
+        var rootCommand = CommandLineInvoker.GetRootCommand(option =>
+        {
+            boundOption = option;
+            return Task.CompletedTask;
+        });
+
+        var exitCode = await rootCommand.InvokeAsync(["BV1xx411c7mD", "--json-only"]);
+
+        Assert.Equal(0, exitCode);
+        Assert.NotNull(boundOption);
+        Assert.True(boundOption.JsonOnly);
+    }
+
+    [Fact]
     public void UpdateDownloaded_RegistersUdAlias()
     {
         var command = CommandLineInvoker.GetUpdateDownloadedCommand((option, dir) => Task.CompletedTask);
