@@ -15,33 +15,7 @@
 
 # 快速开始
 
-> 本仓库是上游 [LOVAHE/BBDownT](https://github.com/LOVAHE/BBDownT) 的 fork，`main` 分支以上游 `v2` 分支为基线。**本仓库不发布预编译二进制**，下面的 Dotnet Tool、独立二进制与自动构建产物都来自上游，不含本仓库的改动。需要使用本仓库的代码时请自行构建。
-
-## 直接使用上游发布版
-
-上游已把本软件以 [Dotnet Tool](https://www.nuget.org/packages/BBDownT/) 形式发布到 nuget.org，包 ID 与命令名均为 `BBDownT`。
-
-如果你本地有dotnet环境，使用如下命令即可安装使用
-```
-dotnet tool install --global BBDownT
-```
-
-如果需要更新BBDownT，使用如下命令
-```
-dotnet tool update --global BBDownT
-```
-
-自行构建的包可用 `BBDownT --update` 自动重新打包并重装 dotnet tool：先执行一次 `BBDownT --set-update-source ./artifacts` 记录 nupkg 源目录（换机器或移动仓库后需重新记录）；若源目录位于仓库内，更新时会先执行 `dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts` 再重装。
-
-重装完成后会比对**落地程序集**与源包内 `BBDownT.dll` 的 SHA-256，一致才算成功。`dotnet tool install` 没有 `--force`，若旧程序集仍被正在运行的 BBDownT 占用，SDK 会只改写 apphost 并返回 0（表现为「提示更新完成，但跑的还是旧代码」）；现在这种情况会在执行 uninstall 之前就停下并提示退出正在运行的 BBDownT 后重试。
-
-Windows 上从 store 内运行时，更新由一个**临时副本**进程完成（先把程序集复制到 `%TEMP%\bbdownt-update-worker` 再用 `dotnet` 拉起副本）：正在运行的 BBDownT 自己锁着待替换的 `BBDownT.dll`，用自身进程重装必然失败。更新结论写入 `BBDownT.update.result.json`，下次启动时汇报一次。
-
-## 下载
-
-Release版本：https://github.com/LOVAHE/BBDownT/releases
-
-自动构建产物：https://github.com/LOVAHE/BBDownT/actions/workflows/build_latest.yml
+> 本仓库是上游 [LOVAHE/BBDownT](https://github.com/LOVAHE/BBDownT) 的 fork，`main` 分支基于上游 `v2` 分支开发，除上游功能外还包含一批上游尚未发布的新功能：下载时写出 `bbdown.json` 元数据、已存在成片只刷元数据（`--metadata-only`）、已下载番剧批量追更（`update-downloaded`/`ud`）、`--update` 用本机 nupkg 重新打包重装等，详见下文使用教程。**本仓库不发布任何预编译产物**：nuget.org 与 GitHub Releases 上的 `BBDownT` 都是上游版本，不含本仓库的改动；需要使用本仓库的代码时请按下文自行构建。
 
 ## 自行构建
 
@@ -62,7 +36,7 @@ dotnet run --project BBDownT -- "https://www.bilibili.com/video/BV1qt4y1X7TW"
 dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts
 ```
 
-产物为 `artifacts/BBDownT.<版本号>.nupkg`（当前为 `BBDownT.2.1.4.nupkg`，包 ID 与 nuget.org 上的同名包一致）。
+产物为 `artifacts/BBDownT.<版本号>.nupkg`（版本号取自 `BBDownT/BBDownT.csproj`，当前为 `BBDownT.2.1.6.nupkg`，包 ID 与 nuget.org 上的同名包一致）。
 
 安装为全局命令（用 `--source` 而**不是** `--add-source`）：
 
@@ -70,7 +44,7 @@ dotnet pack BBDownT/BBDownT.csproj -c Release -o artifacts
 dotnet tool install --global --source ./artifacts BBDownT
 ```
 
-> `--add-source` 只是**追加**源，nuget.org 仍会参与解析。上游已把 `BBDownT` 发到了 nuget.org（当前最新 `2.1.5`），而 `dotnet tool install` 默认解析所有源中的最高版本，因此会装到上游的 `2.1.5` 而不是本地的 `2.1.4`。`--source` 会用给定源**替换**全部源，只从 `./artifacts` 解析。
+> `--add-source` 只是**追加**源，nuget.org 仍会参与解析。上游已把 `BBDownT` 发到了 nuget.org（当前最新 `2.1.7`），而 `dotnet tool install` 默认解析所有源中的最高版本，因此会装到上游的 `2.1.7` 而不是本地的 `2.1.6`。`--source` 会用给定源**替换**全部源，只从 `./artifacts` 解析。
 
 只想在单个目录内使用时，可以装成局部工具：
 
@@ -86,7 +60,7 @@ dotnet tool update --global --source ./artifacts BBDownT
 dotnet tool uninstall --global BBDownT
 ```
 
-*PS: 本地包的 ID 与命令名和 nuget.org 上的 `BBDownT` 完全一致，不能与上游包同时安装。若之前装过上游版本，请先 `dotnet tool uninstall --global BBDownT` 再装本地包；从上游高版本回退到本地低版本时需要追加 `--allow-downgrade`。另外若确实想保留其他源，也可以用 `--add-source ./artifacts --version 2.1.4` 显式锁定版本号。安装时若提示找不到包，通常是 NuGet 官方源被镜像拦截或网络不可达，可以补一个只含本地源的 `nuget.config` 后改用 `--configfile` 安装：*
+*PS: 本地包的 ID 与命令名和 nuget.org 上的 `BBDownT` 完全一致，不能与上游包同时安装。若之前装过上游版本，请先 `dotnet tool uninstall --global BBDownT` 再装本地包；从上游高版本回退到本地低版本时需要追加 `--allow-downgrade`。另外本地包版本号（`2.1.6`）与上游在 nuget.org 上的同名版本相同，无法再靠 `--add-source ./artifacts --version <版本>` 区分来源，要装本地包只能用上面的替换源或 `--configfile` 方式。安装时若提示找不到包，通常是 NuGet 官方源被镜像拦截或网络不可达，可以补一个只含本地源的 `nuget.config` 后改用 `--configfile` 安装：*
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -101,6 +75,20 @@ dotnet tool uninstall --global BBDownT
 ```
 dotnet tool install --global --configfile ./nuget.config BBDownT
 ```
+
+### 重新打包并重装 (--update)
+
+以 dotnet tool 形式安装后，可以让程序重新打包本机源码并重装：
+
+```
+# 首次执行一次: 记录包含 nupkg 的源目录（换机器或移动仓库后需重新记录）
+BBDownT --set-update-source ./artifacts
+
+# 重新打包并重装
+BBDownT --update
+```
+
+*PS: 两个参数都需单独使用，不能与视频地址或其他参数一起传入。`--update` 只在以 dotnet tool 安装（全局或局部）时有效，独立二进制与 `dotnet run` 形态会拒绝并给出 `dotnet pack` + `dotnet tool install` 的手动指引；源目录取 `--set-update-source` 的记录，未记录时会尝试从安装位置推断仓库内的 `artifacts`，只使用本机 nupkg 源，不从上游拉取任何文件；源目录位于仓库内时先重新打包，不在仓库内时跳过打包；重装后会比对落地 `BBDownT.dll` 与源包的 SHA-256，比对不过就按失败处理（常见于旧程序集仍被正在运行的 BBDownT 占用）；Windows 下从 store 运行时转为分离式后台进程，结果写入 `BBDownT.update.result.json`，下次启动时汇报。更新前会自动备份 `BBDownT.data`/`BBDownTTV.data`/`BBDownTApp.data`/`BBDownT.config`/`BBDownT.archives`/`BBDownT.web.json`（cookie 与配置），更新后原样放回，不会丢失。*
 
 ### 发布独立二进制
 
@@ -119,8 +107,6 @@ Linux 产物还要注意 glibc 兼容性：上游 CI 在 Ubuntu 18.04 容器内�
 ```
 dotnet test BBDownT.sln
 ```
-
-*PS: `BBDownT --update` 只使用本机 nupkg 源，不从上游拉取任何文件；源目录不在仓库内时跳过打包；Windows 下从 store 运行时转为分离式后台进程，结果写入 `BBDownT.update.result.json`，下次启动时汇报（重装后会比对落地 `BBDownT.dll` 与源包的 SHA-256，比对不过就按失败处理）。更新前会自动备份 `BBDownT.data`/`BBDownTTV.data`/`BBDownTApp.data`/`BBDownT.config`/`BBDownT.archives`/`BBDownT.web.json`（cookie 与配置），更新后原样放回，不会丢失。*
 
 # 开始使用
 目前命令行参数支持情况
@@ -231,31 +217,6 @@ Commands:
   ud, update-downloaded <dir>  按各目录 bbdown.json 记载的来源链接追更已下载番剧; 已下完的集会跳过下载, 只补新集并刷新弹幕/元数据
 ```
 
-# 功能
-- [x] 番剧下载(Web|TV|App)
-- [x] 课程下载(Web)
-- [x] 普通内容下载(Web|TV|App)
-- [x] 合集/列表/收藏夹/个人空间解析与下载
-- [x] 多分P自动下载
-- [x] 选择指定分P进行下载
-- [x] 选择指定清晰度进行下载
-- [x] 下载外挂字幕并转换为srt格式
-- [x] 自动合并音频+视频流+字幕流+**章节信息**`(使用ffmpeg或mp4box)`
-- [x] 单独下载视频/音频/字幕
-- [x] 二维码登录账号
-- [x] 多线程下载
-- [x] 支持调用aria2c下载
-- [x] 支持AVC/HEVC/AV1编码
-- [x] **支持8K/HDR/HDR Vivid/杜比视界/杜比全景声下载**
-- [x] 自定义存储文件名
-- [x] 自动刷新cookie
-- [x] 下载完成后在输出目录写出 `bbdown.json` 元数据(来源链接 + 分P文件映射 + 本次 `-p`/`-dd` 用法)，供后续脚本定位来源
-- [x] 已存在的成品文件可只刷新元数据(`--metadata-only`)，保留原文件编码与已有标签，接口只返回试看片段时校验后仍可刷新
-- [x] 已下载的番剧可批量追更(`update-downloaded`/`ud`)：按 `bbdown.json` 记录的来源补新集、刷弹幕，或只刷新已下载条目的元数据
-
-# TODO
-- [ ] 支持更多自定义选项
-
 # 使用教程
 
 <details>
@@ -290,6 +251,8 @@ Commands:
 --download-danmaku
 ```
 
+配置文件同样作用于 `ud` 追更子命令：写在这里的 `-dd`、`-p` 等相当于每次追更都带上它们，命令行上显式给出的同名参数优先。注意 `-dd` 写在配置里会让所有目录都刷新弹幕，覆盖"按各目录记录的用法判断"这一默认行为。
+
 </details>
 
 <details>
@@ -318,7 +281,14 @@ BBDownT --migrate
 
 </details>
 
-启用 `--save-archives-to-file` 后，新记录使用 `aid:cid`，每个分P独立归档。旧的 aid 记录保留：仅在原始视频页列表确认该 aid 只有一个分P时沿用；多P或页数未知时逐页检查，不把旧记录视为所有分P均已完成。只选一个分P也不会改变原始视频的页数判断。
+<details>
+<summary>下载归档 (--save-archives-to-file)</summary>
+
+---
+
+启用 `--save-archives-to-file` 后，已下载记录写入程序目录的 `BBDownT.archives`；新记录使用 `aid:cid`，每个分P独立归档。旧的 aid 记录保留：仅在原始视频页列表确认该 aid 只有一个分P时沿用；多P或页数未知时逐页检查，不把旧记录视为所有分P均已完成。只选一个分P也不会改变原始视频的页数判断。
+
+</details>
 
 <details>
 <summary>自定义输出文件名格式 (NEW)</summary> 
@@ -344,7 +314,8 @@ BBDownT --migrate
 `<audioBandwidth>`|音频码率
 `<ownerName>`|上传者名称(下载番剧时，该值为"")
 `<ownerMid>`|上传者mid(下载番剧时，该值为"")
-`<publishDate>`|发布时间(yyyy-MM-dd_HH-mm-ss)
+`<publishDate>`|收藏夹/番剧/合集发布时间(yyyy-MM-dd_HH-mm-ss)
+`<videoDate>`|视频发布时间(分P视频发布时间与`<publishDate>`相同)
 `<apiType>`|API类型（TV/APP/INTL/WEB）
 
 </details>
@@ -435,6 +406,11 @@ BBDownT -p 1-10 "https://www.bilibili.com/video/BV1At41167aj"
 ```
 BBDownT -p ALL "https://www.bilibili.com/bangumi/play/ss33073"
 ```
+下载完成后输出目录里会写出 `bbdown.json`，之后出了新集可以直接追更，不用再记链接：
+```
+BBDownT ud "D:\Anime"
+```
+`ud` 只接受目录作为位置参数（不接视频地址）；详见"追更已下载的番剧"。
 
 </details>
 
@@ -514,11 +490,13 @@ BBDownT --sub-only -ia --skip-ai false "https://www.bilibili.com/video/BV1qt4y1X
 
 `--metadata-only` 在输出文件已存在时不再下载音视频，而是以该文件为输入重新封装，只写回最新元数据(标题/描述/封面/章节/字幕)，音视频流保持 `-c copy` 搬运。刷新写入同目录的 `.partial` 暂存文件，成功后才原子替换；ffmpeg 失败、暂存文件缺失或暂存时长与原文件对不上时，原文件保持字节级不变。
 
-刷新会先用 ffprobe 读回原文件已有的容器与流级标签(音频语言、字幕标题等)再写回，因为封装命令关闭了元数据继承；`--lang` 未指定、字幕接口不再返回同一条字幕时，不读回来就会被清成 `und`。`--simply-mux` 与 `--skip-mux` 下不做标签透传(前者本就不写这些标签，后者不触发刷新)。
+刷新会先用 ffprobe 读回原文件已有的容器与流级标签(音频语言、字幕标题等)再写回，因为封装命令关闭了元数据继承；`--language`(音轨语言标签)未指定、字幕接口不再返回同一条字幕时，不读回来就会被清成 `und`。`--simply-mux` 与 `--skip-mux` 下不做标签透传(前者本就不写这些标签，后者不触发刷新)。
 
 接口只返回试看片段(付费内容 + 会员过期)时，元数据仍来自未被门控的番剧信息接口，因此可以继续刷新，但必须先确认已存在的文件是一集完整正片：文件存在且非空、其时长接近接口给出的整集时长(容差 `max(3s, 1%)`)。任一条件不满足就停止并说明原因，绝不把试看片段洗成"已下载完成"，也不写下载归档。文件名模板若含 `<dfn>`/`<res>`/`<fps>`/`<videoCodecs>`/`<videoBandwidth>`/`<audioCodecs>`/`<audioBandwidth>` 这些来自轨道的占位符，试看响应拼不出原来的文件名，同样会被拒绝。
 
 用 `--save-archives-to-file` 且该分P已记录在归档中时，程序会在分P调度阶段直接跳过整个分P，`--metadata-only` 不会执行；需要重刷元数据时请去掉该参数或清理对应归档行。
+
+要一次刷新一个目录下所有已下载的番剧，用 `BBDownT ud <目录> --metadata-only`：它会按各目录 `bbdown.json` 记载的分P自动处理，不需要逐个目录重跑（见"追更已下载的番剧"）。
 
 </details>
 
@@ -528,6 +506,20 @@ BBDownT --sub-only -ia --skip-ai false "https://www.bilibili.com/video/BV1qt4y1X
 ---
 
 下载时写出的 `bbdown.json` 现在还会记录本次用法：显式给了 `-p` 时记为 `selectPage`，开了 `-dd` 时把生效的弹幕格式记为 `danmakuFormats`。`update-downloaded`（短名 `ud`）就是靠这两个字段判断"这个目录当初是怎么下的、要不要顺带刷弹幕"，然后按记录的来源链接重跑一次下载。已下完的集会被既有的"输出文件已存在则跳过"逻辑跳过，因此一次追更只会补下新集。两个标记只增不清：`selectPage` 记成 `ALL` 之后，后来单独补下一集（`-p 3`）不会把它降级回窄范围，`danmakuFormats` 也不会因为某次没带 `-dd` 而消失。
+
+`bbdown.json` 的完整结构（脚本也可以直接读它定位来源）：
+
+| 键 | 说明 |
+| --- | --- |
+| `sourceId` | 原样记录的下载输入（链接或 `av`/`BV`/`ep`/`ss`） |
+| `url` | 由 `sourceId` 归一出的来源链接，追更重跑用的就是它；两者都没有时该目录会被追更跳过 |
+| `title` | 视频/番剧标题 |
+| `updatedAt` | 最近一次写入时间（含时区偏移） |
+| `selectPage` | 当初显式传入的 `-p`，如 `ALL`、`1,3-5`；没传过 `-p` 则不写 |
+| `danmakuFormats` | 当初下载的弹幕格式，如 `xml,ass`；没下过弹幕则不写 |
+| `pages[]` | 每个分P一条：`page` 分P序号、`file` 成品文件名、`xml`/`ass` 弹幕文件名（磁盘上存在才写） |
+
+`ud` 的位置参数是**目录**，不接视频地址；链接一律从各目录的 `bbdown.json` 读取，省略位置参数时依次回落到 `--work-dir` 与当前目录。
 
 ```
 # 追更仓库根下的所有番剧目录
@@ -552,8 +544,11 @@ BBDownT ud "D:\Anime" --only-show-info
 - 弹幕刷新需要 `danmakuFormats` 存在（当初用了 `-dd`）**或** 每个分P都记载了 `xml`/`ass`（旧版文件的证据）。显式带上 `-dd` 时所有入选目录都会刷弹幕。当初带 `-dd` 下载的目录，追更时下的新集会自带弹幕。
 - 入选目录若标记为全集下载（或旧文件的分P数大于1），追更会自动按 `-p ALL` 执行以取到新集；显式传入的 `-p` 优先。
 - `--danmaku-only` 与 `--metadata-only` 是"只刷新已下载条目"的独占模式：只处理 `bbdown.json` 里已记载的那些分P，不会去取新集。`--sub-only`、`--cover-only`、`--video-only`、`--audio-only`、`--download-all`、`--interactive` 与 `ud` 同时使用会直接报错。
+- 独占模式下记载的集号若在当前接口里已经不存在（撤集、`ss` 重新映射到别的季、目录改名），只会告警跳过该集，不影响该目录的其余分P。
 
-执行位置由传入的目录决定，恒为"含 `bbdown.json` 的目录的父目录"：默认多P模板把成品写在 `视频标题\[P01]分P标题.mp4` 下，只有在这个父目录里执行才会命中既有成品并跳过。因此把番剧目录本身传给 `ud` 与把它的父目录传给 `ud` 是等价的，后者只是会顺带处理兄弟目录。标题在上游被改名时会另建新目录、重新下载，这是唯一一种追更会重下已完成内容的情形。
+执行位置由传入的目录决定，恒为"含 `bbdown.json` 的目录的父目录"：默认多P模板把成品写在 `视频标题\[P01]分P标题.mp4` 下，只有在这个父目录里执行才会命中既有成品并跳过。因此把番剧目录本身传给 `ud` 与把它的父目录传给 `ud` 是等价的，后者只是会顺带处理兄弟目录。
+
+追更时如果上游改了标题、或自定义的 `-F`/`-M` 与当初下载时不一致，程序会拼出另一个文件名而认不出既有成品，从而重下一遍；保持与当初一致的模板就不会出现这种情况。
 
 逐目录串行执行，目录之间等待 `--delay-per-video`（默认 10 秒）；单个目录失败只记录并继续，结束时汇总"成功 n，失败 f"，有失败则以非零码退出。旧版 `bbdown.json` 在首次追更后会被自动补写上新字段。
 
@@ -601,6 +596,8 @@ BBDownT --download-all --audio-only --work-dir "./downloads" "https://space.bili
 ```shell
 BBDownT serve -l http://0.0.0.0:12450
 ```
+
+不带 `-l` 时默认监听 `http://127.0.0.1:23333`；监听非本机地址时会启用 API Token（`--api-token` 指定或写入配置文件，未配置时启动自动生成）。任务队列、下载根目录、允许任务传入的自定义项等服务器配置见 [json-api-doc.md](./json-api-doc.md) 的"服务器配置"一节。
 
 API服务器不支持HTTPS配置，如果有需要请自行使用nginx等反向代理进行配置
 
