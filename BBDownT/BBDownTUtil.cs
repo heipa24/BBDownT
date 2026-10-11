@@ -607,7 +607,7 @@ static partial class BBDownTUtil
     private static partial Regex UidRegex();
     [GeneratedRegex(@"\.bilibili\.tv\/\w+\/play\/\d+\/(\d+)")]
     private static partial Regex GlobalEpRegex();
-    [GeneratedRegex("bangumi/media/(md\\d+)")]
+    [GeneratedRegex("bangumi/media/md(\\d+)")]
     private static partial Regex BangumiMdRegex();
     [GeneratedRegex(@"window.__INITIAL_STATE__=([\s\S].*?);\(function\(\)")]
     private static partial Regex StateRegex();

@@ -105,8 +105,13 @@ internal static class UpdateDownloaded
         var child = parent.ForBatchVideo(metadata.Url, execDir);
         if (!parent.SelectPageSpecified && (IsAllPages(metadata.SelectPage) || metadata.Pages.Count > 1))
         {
-            child.SelectPage = "ALL";
-            child.SelectPageSpecified = true;
+            // md 来源且没有记录过显式 -p: 当初是"默认全集(排除PV)"下载, 交给下载侧的 md 默认逻辑
+            // 以保持排除PV; 其余(旧版无标记的多P / 记录过显式 -p)维持 ALL 重放。
+            if (!(string.IsNullOrWhiteSpace(metadata.SelectPage) && Program.IsBangumiMdSource(metadata.Url)))
+            {
+                child.SelectPage = "ALL";
+                child.SelectPageSpecified = true;
+            }
         }
         child.DownloadDanmaku = ShouldRefreshDanmaku(metadata, parent.DownloadDanmaku);
         if (IsArtifactOnlyUpdate(parent))

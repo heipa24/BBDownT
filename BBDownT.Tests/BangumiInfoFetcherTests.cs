@@ -161,6 +161,90 @@ public class BangumiInfoFetcherTests
         Assert.Equal("fallback.jpg", result.Pic);
     }
 
+    [Fact]
+    public async Task SeasonMode_IncludesMainAndAllSectionsWithSectionTitles()
+    {
+        var response = Season(Episode("10", "1", "Main", "missing"));
+        response["result"]!["section"] = new JsonArray(
+            Section("Extras", Episode("30", "SP", "Bonus", "missing"), Episode("40", "SP2", "", "missing")),
+            Section("PV", Episode("20", "PV", "", "missing")));
+
+        var result = await BangumiInfoFetcher.FetchSeasonAsync("ep:10", Stub(response));
+
+        Assert.Equal("Season", result.Title);
+        Assert.Collection(result.PagesInfo,
+            page =>
+            {
+                Assert.Equal(1, page.index);
+                Assert.Equal("10", page.epid);
+                Assert.Null(page.sectionTitle);
+                Assert.False(page.pvSection);
+            },
+            page =>
+            {
+                Assert.Equal(2, page.index);
+                Assert.Equal("30", page.epid);
+                Assert.Equal("Season [Extras]", page.sectionTitle);
+                Assert.False(page.pvSection);
+            },
+            page =>
+            {
+                Assert.Equal(3, page.index);
+                Assert.Equal("40", page.epid);
+                Assert.Equal("Season [Extras]", page.sectionTitle);
+                Assert.False(page.pvSection);
+            },
+            page =>
+            {
+                Assert.Equal(4, page.index);
+                Assert.Equal("20", page.epid);
+                Assert.Equal("Season [PV]", page.sectionTitle);
+                Assert.True(page.pvSection);
+            });
+        Assert.Equal("1", result.Index);
+    }
+
+    [Fact]
+    public async Task SeasonMode_SkipsPreviewEpisodesAndKeepsSequentialIndexes()
+    {
+        var response = Season(Episode("10", "1", "Main", "missing"));
+        response["result"]!["section"] = new JsonArray(
+            Section("Extras", Episode("30", "SP", "Preview", "missing", badge: "预告"), Episode("40", "SP2", "", "missing")));
+
+        var result = await BangumiInfoFetcher.FetchSeasonAsync("ep:40", Stub(response));
+
+        Assert.Equal(2, result.PagesInfo.Count);
+        Assert.Equal(2, result.PagesInfo[1].index);
+        Assert.Equal("40", result.PagesInfo[1].epid);
+        Assert.Equal("2", result.Index);
+    }
+
+    [Fact]
+    public async Task SeasonMode_ToleratesMissingEpisodesOrSections()
+    {
+        var response = Season();
+        response["result"]!["section"] = new JsonArray(Section("Extras", Episode("30", "SP", "", "missing")));
+
+        var result = await BangumiInfoFetcher.FetchSeasonAsync("ep:30", Stub(response));
+
+        Assert.Equal("Season [Extras]", Assert.Single(result.PagesInfo).sectionTitle);
+        Assert.Equal("1", result.Index);
+
+        var noSection = Season(Episode("10", "1", "Main", "missing"));
+        var result2 = await BangumiInfoFetcher.FetchSeasonAsync("ep:10", Stub(noSection));
+
+        Assert.Equal("Season", result2.Title);
+        Assert.Null(Assert.Single(result2.PagesInfo).sectionTitle);
+    }
+
+    private static Func<string, Task<string>> Stub(JsonObject response) => _ => Task.FromResult(response.ToJsonString());
+
+    private static JsonObject Section(string title, params JsonNode[] episodes) => new()
+    {
+        ["title"] = title,
+        ["episodes"] = new JsonArray(episodes)
+    };
+
     private static Task<VInfo> Fetch(bool international, string id, JsonObject response, List<string>? requests = null)
     {
         Task<string> FetchResponse(string url)

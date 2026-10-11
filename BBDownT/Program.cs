@@ -581,15 +581,19 @@ partial class Program
         IFetcher fetcher = FetcherFactory.CreateFetcher(aidOri, myOption.UseIntlApi);
         VInfo? vInfo = null;
 
+        // md 链接指向整季, 除正片外还要解析全部番外 section
+        bool seasonMode = aidOri.StartsWith("ep:") && IsBangumiMdSource(input);
+
         // 只输入 EP/SS 时优先按番剧查找，如果找不到则尝试按课程查找
         try
         {
-            vInfo = await fetcher.FetchAsync(aidOri);
+            vInfo = seasonMode ? await fetcher.FetchSeasonAsync(aidOri) : await fetcher.FetchAsync(aidOri);
         }
         catch (KeyNotFoundException e)
         {
             if (e.Message != "Arg_KeyNotFound") throw; // 错误消息不符合预期，抛出异常
             if (aidOri.StartsWith("cheese:")) throw; // 已经按课程查找过，不再重复尝试
+            if (seasonMode) throw; // md 输入已确认媒体存在, 信息接口失败时按课程重试没有意义
 
             LogWarn("未找到此 EP/SS 对应番剧信息, 正在尝试按课程查找。");
 
@@ -686,7 +690,7 @@ partial class Program
         var pagesCount = vInfo.PagesInfo.Count;
         List<Subtitle> subtitleInfo = [];
         HashSet<string>? subtitleChoices = null;
-        string title = vInfo.Title;
+        string title = ResolvePageTitle(vInfo, p);
         string pic = vInfo.Pic;
         long pubTime = vInfo.PubTime;
         bool selected = false; //用户是否已经手动选择过了轨道

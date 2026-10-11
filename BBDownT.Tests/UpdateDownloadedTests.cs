@@ -18,12 +18,12 @@ public class UpdateDownloadedTests : IDisposable
         try { Directory.Delete(root, true); } catch (IOException) { }
     }
 
-    private static BbdownMetadata Metadata(int pages = 2, string? selectPage = null, string? danmakuFormats = null, bool everyPageHasArtifact = false)
+    private static BbdownMetadata Metadata(int pages = 2, string? selectPage = null, string? danmakuFormats = null, bool everyPageHasArtifact = false, string url = "https://www.bilibili.com/bangumi/play/ss1")
     {
         var list = Enumerable.Range(1, pages)
             .Select(page => new BbdownPage(page, $"[P{page:D2}]x.mp4", everyPageHasArtifact))
             .ToList();
-        return new BbdownMetadata("/anime", "https://www.bilibili.com/bangumi/play/ss1", selectPage, danmakuFormats, list);
+        return new BbdownMetadata("/anime", url, selectPage, danmakuFormats, list);
     }
 
     private string CreateBangumiDir(string name, int pageCount, string extraFields = "")
@@ -152,6 +152,26 @@ public class UpdateDownloadedTests : IDisposable
         Assert.Equal("ALL", marked.SelectPage);
         Assert.True(marked.SelectPageSpecified);
         Assert.Equal("ALL", legacy.SelectPage);
+    }
+
+    [Fact]
+    public void BuildChild_MdSourceWithoutExplicitRecord_DelegatesToMdDefault()
+    {
+        var child = UpdateDownloaded.BuildChild(
+            new MyOption(), Metadata(5, url: "https://www.bilibili.com/bangumi/media/md28230042"), root);
+
+        Assert.Equal("", child.SelectPage);
+        Assert.False(child.SelectPageSpecified);
+    }
+
+    [Fact]
+    public void BuildChild_MdSourceWithExplicitAllRecord_ReplaysAll()
+    {
+        var child = UpdateDownloaded.BuildChild(
+            new MyOption(), Metadata(6, "ALL", url: "https://www.bilibili.com/bangumi/media/md28230042"), root);
+
+        Assert.Equal("ALL", child.SelectPage);
+        Assert.True(child.SelectPageSpecified);
     }
 
     [Fact]

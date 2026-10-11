@@ -1,4 +1,4 @@
-﻿using BBDownT.Core.Util;
+using BBDownT.Core.Util;
 using System.Diagnostics.CodeAnalysis;
 
 namespace BBDownT.Core.Entity;
@@ -19,6 +19,10 @@ public static class Entity
         public string? desc;
         public string? ownerName;
         public string? ownerMid;
+        // md 链接按整季下载时, 番外 section 分集的主标题覆盖(标题[section名]); 正片分集为 null
+        public string? sectionTitle;
+        // md 链接按整季下载时, 标记该分集来自 PV 类 section(未指定 -p 的默认全集会排除它们)
+        public bool pvSection;
         public string bvid
         {
             get => BilibiliBvConverter.Encode(long.Parse(aid));

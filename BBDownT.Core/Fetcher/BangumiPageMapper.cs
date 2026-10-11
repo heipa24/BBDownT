@@ -10,7 +10,10 @@ internal static class BangumiPageMapper
     internal static (List<Page> Pages, string SelectedIndex) Map(
         IEnumerable<JsonElement> episodes,
         string selectedEpisodeId,
-        bool allowMissingPublicationTime)
+        bool allowMissingPublicationTime,
+        int startIndex = 1,
+        string? sectionTitle = null,
+        bool pvSection = false)
     {
         List<Page> pages = [];
         string selectedIndex = "";
@@ -23,7 +26,7 @@ internal static class BangumiPageMapper
             var title = (episode.GetProperty("title").ToString() + " "
                 + episode.GetProperty("long_title").ToString()).Trim();
             Page page = new(
-                pages.Count + 1,
+                pages.Count + startIndex,
                 episode.GetProperty("aid").ToString(),
                 episode.GetProperty("cid").ToString(),
                 episode.GetProperty("id").ToString(),
@@ -32,7 +35,11 @@ internal static class BangumiPageMapper
                 resolution,
                 allowMissingPublicationTime && !episode.TryGetProperty("pub_time", out _)
                     ? 0
-                    : episode.GetProperty("pub_time").GetInt64());
+                    : episode.GetProperty("pub_time").GetInt64())
+            {
+                sectionTitle = sectionTitle,
+                pvSection = pvSection
+            };
             if (page.epid == selectedEpisodeId) selectedIndex = page.index.ToString();
             pages.Add(page);
         }

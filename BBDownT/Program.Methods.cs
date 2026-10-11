@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Encodings.Web;
@@ -475,7 +475,7 @@ internal partial class Program
     /// <param name="vInfo"></param>
     /// <param name="input"></param>
     /// <returns></returns>
-    private static List<string>? GetSelectedPages(MyOption myOption, VInfo vInfo, string input)
+    internal static List<string>? GetSelectedPages(MyOption myOption, VInfo vInfo, string input)
     {
         List<string>? selectedPages = null;
         List<Page> pagesInfo = vInfo.PagesInfo;
@@ -483,6 +483,18 @@ internal partial class Program
 
         if (!myOption.SelectPageSpecified && string.IsNullOrWhiteSpace(selectPage))
         {
+            // md 链接是整季入口: 默认全集但排除 PV, 需要包含PV请显式 -p ALL
+            if (IsBangumiMdSource(input))
+            {
+                var nonPvPages = pagesInfo.Where(p => !p.pvSection).Select(p => p.index.ToString()).ToList();
+                if (nonPvPages.Count > 0 && nonPvPages.Count < pagesInfo.Count)
+                {
+                    Log("检测到番剧 media/md 链接, 未指定分P, 默认下载全部剧集(不含PV); 如需包含PV请使用 -p ALL");
+                    return nonPvPages;
+                }
+                Log("检测到番剧 media/md 链接, 未指定分P, 默认下载全部剧集; 如需指定可用 -p (如 -p 1-3)");
+                return null;
+            }
             //如果用户没有选择分P, 根据epid或query param来确定某一集
             if (!string.IsNullOrEmpty(vInfo.Index))
             {
@@ -502,6 +514,24 @@ internal partial class Program
 
         return selectedPages;
     }
+
+    /// <summary>
+    /// 输入是否为番剧媒体链接(bangumi/media/mdXXXX 或裸 mdXXXX)。这类输入指向整季,
+    /// 未显式指定 -p 时按全集处理。
+    /// </summary>
+    internal static bool IsBangumiMdSource(string input)
+    {
+        var trimmed = input?.Trim() ?? "";
+        if (trimmed.Length > 2 && trimmed.StartsWith("md") && trimmed[2..].All(char.IsDigit))
+            return true;
+        return trimmed.Contains("bangumi/media/md", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 分P的主标题: md 整季下载时番外 section 分集用 标题[section名], 其余分集用 VInfo.Title
+    /// </summary>
+    internal static string ResolvePageTitle(VInfo vInfo, Page p) =>
+        string.IsNullOrEmpty(p.sectionTitle) ? vInfo.Title : p.sectionTitle;
 
     /// <summary>
     /// 追更的独占刷新模式只处理 bbdown.json 记载过的分P。记载的集号可能已经不存在
