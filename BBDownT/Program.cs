@@ -86,7 +86,9 @@ partial class Program
         Func<MyOption, Task> runApp,
         Func<int> migrate,
         Func<Task<int>>? update = null,
-        Func<string, Task<int>>? setUpdateSource = null)
+        Func<string, Task<int>>? setUpdateSource = null,
+        Func<LoginQr, Task>? login = null,
+        Func<LoginQr, Task>? loginTv = null)
     {
         var rootCommand = CommandLineInvoker.GetRootCommand(runApp);
         var updateOption = new Option<bool>("--update", "使用本机 nupkg 重新打包并重装 dotnet tool；需单独使用")
@@ -119,14 +121,10 @@ partial class Program
             if (!result.IsImplicit) result.ErrorMessage = migrationUsageError;
         });
         rootCommand.AddOption(migrateOption);
-        Command loginCommand = new(
-            "login",
-            "通过APP扫描二维码以登录您的WEB账号");
-        rootCommand.AddCommand(loginCommand);
-        Command loginTVCommand = new(
-            "logintv",
-            "通过APP扫描二维码以登录您的TV账号");
-        rootCommand.AddCommand(loginTVCommand);
+        rootCommand.AddCommand(CommandLineInvoker.GetLoginCommand(
+            "login", "通过APP扫描二维码以登录您的WEB账号", login ?? BBDownTLoginUtil.LoginWEB));
+        rootCommand.AddCommand(CommandLineInvoker.GetLoginCommand(
+            "logintv", "通过APP扫描二维码以登录您的TV账号", loginTv ?? BBDownTLoginUtil.LoginTV));
         var serverUrlOpt = new Option<string>(
             ["--listen", "-l"],
             description: "服务器监听url");
@@ -191,12 +189,6 @@ partial class Program
                 () => UpdateDownloaded.RunAsync(option, dir, child => ExecuteWorkAsync(child)))));
         rootCommand.Description = "BBDownT是一个免费且便捷高效的哔哩哔哩下载/解析软件.";
         rootCommand.TreatUnmatchedTokensAsErrors = true;
-
-        //WEB登录
-        loginCommand.SetHandler(BBDownTLoginUtil.LoginWEB);
-
-        //TV登录
-        loginTVCommand.SetHandler(BBDownTLoginUtil.LoginTV);
 
         var parser = new CommandLineBuilder(rootCommand)
             .UseDefaults()
@@ -283,16 +275,22 @@ partial class Program
         // 名字比较会把子命令误判成根命令, 追更的位置参数会被当成视频地址。
         if (commandLineResult.CommandResult.Command != rootCommand)
         {
+            var subcommandName = commandLineResult.CommandResult.Command.Name.ToLower();
             // 服务器模式与追更子命令复用全部 global option, 需要完整的arg列表
-            if (commandLineResult.CommandResult.Command.Name.ToLower() is "serve" or "update-downloaded")
+            if (subcommandName is "serve" or "update-downloaded")
             {
-                var subcommandName = commandLineResult.CommandResult.Command.Name.ToLower();
                 newArgsList.AddRange(args);
                 if (!BBDownTConfigParser.HandleConfig(newArgsList, rootCommand, subcommandName))
                 {
                     return 1;
                 }
                 return await parser.InvokeAsync(newArgsList.ToArray());
+            }
+            // 登录子命令自带参数(-img/-qs), 也要原样转传: 只回命令名的话, 参数解析成功后会被丢掉。
+            // 不调 HandleConfig, 与这两个子命令一直不读 BBDownT.config 的行为保持一致。
+            if (subcommandName is "login" or "logintv")
+            {
+                return await parser.InvokeAsync(args);
             }
             newArgsList.Add(commandLineResult.CommandResult.Command.Name);
             return await parser.InvokeAsync(newArgsList.ToArray());

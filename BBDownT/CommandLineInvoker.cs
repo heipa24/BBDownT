@@ -316,4 +316,27 @@ internal static class CommandLineInvoker
             MyOptionBinder.Bind(bindingContext.ParseResult, ""),
             bindingContext.ParseResult.GetValueForArgument(UpdateDownloadedDir) ?? "");
     }
+
+    /// <summary>
+    /// 扫码登录子命令。这两个参数只服务于本地终端交互，故不进 AllOptions 也不进 MyOption：
+    /// 前者是配置文件的白名单，后者会被 HTTP 任务接口原样接收。
+    /// beta4 不允许同一个 Option 实例挂到两个命令上，所以 login 与 logintv 各要一份，用工厂保证声明一致。
+    /// </summary>
+    internal static Command GetLoginCommand(string name, string description, Func<LoginQr, Task> action)
+    {
+        var imageOption = new Option<bool>(
+            ["--qr-image", "-img"],
+            "用系统默认图片查看器打开二维码，此时不再在终端打印");
+        var styleOption = new Option<string>(
+            ["--qr-style", "-qs"],
+            $"终端二维码渲染方式: {string.Join('/', QrConsoleRender.AllStyleNames)}；compact(默认)用半角块, 宽高各减半, block 用双整块 ██, 供渲染不出半角块的终端使用；与 -img 同时使用时忽略");
+        styleOption.AddValidator(result => result.ErrorMessage = QrConsoleRender.ValidateStyle(result.GetValueOrDefault<string>()));
+        var command = new Command(name, description);
+        command.AddOption(imageOption);
+        command.AddOption(styleOption);
+        command.SetHandler(context => action(new LoginQr(
+            context.ParseResult.GetValueForOption(imageOption),
+            context.ParseResult.GetValueForOption(styleOption))));
+        return command;
+    }
 }

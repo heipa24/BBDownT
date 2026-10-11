@@ -296,6 +296,42 @@ public class CommandLineEntryTests
         Assert.DoesNotContain("--update-worker", result.Output);
     }
 
+    [Fact]
+    public async Task Login_WithQrOptions_ForwardsArgumentsToHandler()
+    {
+        // 子命令分发过去只把命令名回填给解析器, 参数留在原args里才不会被丢掉。
+        var result = await Invoke(["login", "-img", "--qr-style", "block"], config: "");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(1, result.LoginCalls);
+        Assert.NotNull(result.LoginRequest);
+        Assert.True(result.LoginRequest.Value.OpenImage);
+        Assert.Equal("block", result.LoginRequest.Value.Style);
+        Assert.Equal(0, result.DownloadCalls);
+    }
+
+    [Fact]
+    public async Task Login_WithoutQrOptions_StartsWithTerminalDefaults()
+    {
+        var result = await Invoke(["login"], config: "");
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(1, result.LoginCalls);
+        Assert.NotNull(result.LoginRequest);
+        Assert.False(result.LoginRequest.Value.OpenImage);
+        Assert.Null(result.LoginRequest.Value.Style);
+    }
+
+    [Fact]
+    public async Task Login_WithInvalidQrStyle_FailsBeforeReachingTheHandler()
+    {
+        var result = await Invoke(["login", "--qr-style", "foo"], config: "");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(0, result.LoginCalls);
+        Assert.Contains("二维码渲染方式无效", result.Error);
+    }
+
     private static async Task<InvocationResult> Invoke(
         string[] args,
         string? config = null,
@@ -312,7 +348,9 @@ public class CommandLineEntryTests
         var updates = 0;
         var downloads = 0;
         var setUpdateSources = 0;
+        var logins = 0;
         MyOption? bound = null;
+        LoginQr? loginRequest = null;
         try
         {
             if (config is not null)
@@ -338,8 +376,15 @@ public class CommandLineEntryTests
             {
                 setUpdateSources++;
                 return Task.FromResult(setUpdateSourceExitCode);
-            });
-            return new InvocationResult(code, output.ToString(), error.ToString(), migrations, updates, downloads, setUpdateSources, bound);
+            },
+            qr =>
+            {
+                logins++;
+                loginRequest = qr;
+                return Task.CompletedTask;
+            },
+            _ => Task.CompletedTask);
+            return new InvocationResult(code, output.ToString(), error.ToString(), migrations, updates, downloads, setUpdateSources, logins, loginRequest, bound);
         }
         finally
         {
@@ -350,5 +395,5 @@ public class CommandLineEntryTests
     }
 
     private sealed record InvocationResult(
-        int ExitCode, string Output, string Error, int MigrationCalls, int UpdateCalls, int DownloadCalls, int SetUpdateSourceCalls, MyOption? Option);
+        int ExitCode, string Output, string Error, int MigrationCalls, int UpdateCalls, int DownloadCalls, int SetUpdateSourceCalls, int LoginCalls, LoginQr? LoginRequest, MyOption? Option);
 }

@@ -101,4 +101,57 @@ public class CommandLineInvokerTests
 
         Assert.Equal("", boundDir);
     }
+
+    [Fact]
+    public async Task Login_BindsImageAndStyleOptions()
+    {
+        LoginQr? bound = null;
+        var rootCommand = CommandLineInvoker.GetRootCommand(_ => Task.CompletedTask);
+        rootCommand.AddCommand(CommandLineInvoker.GetLoginCommand("login", "登录", qr =>
+        {
+            bound = qr;
+            return Task.CompletedTask;
+        }));
+
+        Assert.Equal(0, await rootCommand.InvokeAsync(["login", "-img", "--qr-style", "block"]));
+
+        Assert.NotNull(bound);
+        Assert.True(bound.Value.OpenImage);
+        Assert.Equal("block", bound.Value.Style);
+    }
+
+    [Fact]
+    public async Task Login_WithoutOptions_DefaultsToTerminalCompact()
+    {
+        LoginQr? bound = null;
+        var rootCommand = CommandLineInvoker.GetRootCommand(_ => Task.CompletedTask);
+        rootCommand.AddCommand(CommandLineInvoker.GetLoginCommand("login", "登录", qr =>
+        {
+            bound = qr;
+            return Task.CompletedTask;
+        }));
+
+        Assert.Equal(0, await rootCommand.InvokeAsync(["login"]));
+
+        Assert.NotNull(bound);
+        Assert.False(bound.Value.OpenImage);
+        Assert.Null(bound.Value.Style);
+        Assert.True(QrConsoleRender.UsesHalfBlocks(bound.Value.Style));
+    }
+
+    [Fact]
+    public async Task Login_InvalidStyle_IsRejectedBeforeHandlerRuns()
+    {
+        var invoked = false;
+        var rootCommand = CommandLineInvoker.GetRootCommand(_ => Task.CompletedTask);
+        rootCommand.AddCommand(CommandLineInvoker.GetLoginCommand("login", "登录", _ =>
+        {
+            invoked = true;
+            return Task.CompletedTask;
+        }));
+
+        Assert.NotEqual(0, await rootCommand.InvokeAsync(["login", "-qs", "half"]));
+
+        Assert.False(invoked);
+    }
 }

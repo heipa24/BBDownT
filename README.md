@@ -217,6 +217,18 @@ Commands:
   ud, update-downloaded <dir>  按各目录 bbdown.json 记载的来源链接追更已下载番剧; 已下完的集会跳过下载, 只补新集并刷新弹幕/元数据
 ```
 
+`login`/`logintv` 除继承上面的全局参数外，还各自带有两个二维码呈现参数（`BBDownT login --help` 的节选）：
+
+```
+Usage:
+  BBDownT <url> login [options]
+
+Options:
+  -img, --qr-image                                             用系统默认图片查看器打开二维码，此时不再在终端打印
+  -qs, --qr-style <qr-style>                                   终端二维码渲染方式: compact/block；compact(默认)用半角块, 宽高各减半, block 用双整块 ██, 供渲染不出半角块的终端使用；与 -img 同时使用时忽略
+  ...
+```
+
 # 使用教程
 
 <details>
@@ -331,13 +343,27 @@ BBDownT login
 ```
 然后按照提示操作。登录成功后会同时保存用于刷新Cookie的`ac_time_value`，后续运行时会在需要时自动刷新本地Cookie。
 
+二维码默认用半角块`▀▄█`画在终端里，宽高各只有旧版双整块的一半（登录码约65列×33行，旧版是130列×65行）；终端字体渲染不出半角块时用`-qs block`退回双整块：
+
+```
+BBDownT login -qs block
+```
+
+屏幕太小放不下字符码时用`-img`，程序会把二维码写进系统临时目录并调用系统默认图片查看器打开（此时不再打印字符码；无桌面环境如SSH、容器下会打印图片路径，可自行取出打开）：
+
+```
+BBDownT login -img
+```
+
+两种方式都不会再在工作目录生成`qrcode.png`。
+
 扫码登录云视听小电视账号：
 ```
 BBDownT logintv
 ```
-然后按照提示操作
- 
-*PS: 如果登录报错`The type initializer for 'Gdip' threw an exception`，通常是运行环境缺少图形或二维码相关依赖，请按当前系统补齐依赖后重试*
+然后按照提示操作，二维码呈现参数同上。
+
+*PS: `-img`依赖系统的默认图片查看器（Windows的文件关联、macOS的`open`、Linux的`xdg-open`），调用失败时会打印图片路径而不是报错中断登录；若字符码显示花乱，多半是终端字体的问题，换`-qs block`或`-img`即可*
 
 手动加载网页cookie：
 ```

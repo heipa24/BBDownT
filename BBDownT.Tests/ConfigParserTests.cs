@@ -77,4 +77,35 @@ public class ConfigParserTests
             File.Delete(path);
         }
     }
+
+    /// <summary>
+    /// 二维码呈现参数是 login/logintv 的专属开关, 不进 AllOptions, 配置文件里写它们必须继续被拒,
+    /// 否则用户会以为下载流程也能用这两个参数。
+    /// </summary>
+    [Fact]
+    public async Task ConfigFile_RejectsLoginOnlyQrOptions()
+    {
+        var path = Path.GetTempFileName();
+        await File.WriteAllTextAsync(path, "--qr-image\n--qr-style compact\n");
+        var arguments = new List<string> { "BV1xx411c7mD", "--config-file", path };
+        var rootCommand = CommandLineInvoker.GetRootCommand(_ => Task.CompletedTask);
+        rootCommand.TreatUnmatchedTokensAsErrors = true;
+        var originalOutput = Console.Out;
+        using var output = new StringWriter();
+        try
+        {
+            Console.SetOut(output);
+
+            var success = BBDownTConfigParser.HandleConfig(arguments, rootCommand);
+
+            Assert.False(success);
+            Assert.DoesNotContain("--qr-image", arguments);
+            Assert.DoesNotContain("--qr-style", arguments);
+        }
+        finally
+        {
+            Console.SetOut(originalOutput);
+            File.Delete(path);
+        }
+    }
 }
