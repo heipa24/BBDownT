@@ -57,6 +57,7 @@ playurl（`ExtractTracksAsync`，每分P内调用）才是会员门槛：无大�
 
 - `--json-only` 全程不进 playurl → 无大会员（甚至无登录）即可完成旧目录迁移。
 - `--metadata-only` 借 `CheckPreviewMetadataRefresh` 的 ffprobe 时长校验（既有文件时长 ≥ 整集，1% 容差）对完整正片放行 ffmpeg 元数据刷新，同样可用。
+- 反向场景（接口能拿到完整正片、已存在文件却是旧版留下的试看片段）由 `HandlePreviewExistingOutput` 处理：时长不足整集即重新下载覆盖；`--metadata-only` 无法修复试看片段，返回 Failed 并提示去掉该参数重下。判定与 `CheckPreviewMetadataRefresh` 共用 `IsDurationShorterThanEpisode`（1% 容差，≥3s），接口未给整集时长或 ffprobe 不可用时保守维持跳过。
 - 唯一拿不到的是流级字段（`quality/fps/codecs/audioCodecs`）；试看响应绝不能把这些值写进 bbdown.json（它们不代表当初下载的流），合并语义下旧值保留、无值缺省，不影响追更。
 
 ## 扫描与筛选

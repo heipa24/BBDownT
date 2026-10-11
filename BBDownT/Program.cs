@@ -976,6 +976,8 @@ partial class Program
 
                 if (ShouldUseMuxedOutputCache(myOption, savePath))
                 {
+                    if (HandlePreviewExistingOutput(parsedResult, myOption, savePath) is { } previewOutcome)
+                        return previewOutcome;
                     return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "", episodeId,
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
                         input, p, pageDetails, markers, relatedTask);
@@ -1098,6 +1100,8 @@ partial class Program
                 pageDetails = BbdownPageDetails.From(p, null, null, includeStream: !parsedResult.IsPreviewOnly, myOption);
                 if (IsUsableArtifact(savePath))
                 {
+                    if (HandlePreviewExistingOutput(parsedResult, myOption, savePath) is { } previewOutcome)
+                        return previewOutcome;
                     return HandleExistingOutput(myOption, savePath, desc, title, p.ownerName ?? "",
                         (pagesCount > 1 || (bangumi && !vInfo.IsBangumiEnd)) ? p.title : "",
                         File.Exists(coverPath) ? coverPath : "", lang, subtitleInfo, p.points, p.pubTime,
@@ -1218,10 +1222,8 @@ partial class Program
         if (actual is null)
             return NoPreviewRefresh($"{savePath} 无法用 ffprobe 校验时长(缺少 ffprobe 或文件不可读), 已停止刷新");
 
-        var total = (double)parsedResult.TotalDurationSeconds;
-        var tolerance = Math.Max(3, total * 0.01);
-        if (actual < total - tolerance)
-            return NoPreviewRefresh($"{savePath} 时长 {actual:F0}s 远短于整集 {total:F0}s, 更像试看片段, 不会当作完整成片刷新");
+        if (IsDurationShorterThanEpisode(actual, parsedResult.TotalDurationSeconds))
+            return NoPreviewRefresh($"{savePath} 时长 {actual.Value:F0}s 远短于整集 {(double)parsedResult.TotalDurationSeconds:F0}s, 更像试看片段, 不会当作完整成片刷新");
 
         return new PreviewRefreshCheck(true, "");
     }
@@ -1261,6 +1263,33 @@ partial class Program
         if (!parsedResult.IsPreviewOnly) return false;
         LogError("试看片段不会写入输出文件；请检查登录状态和会员权限。");
         return true;
+    }
+
+    // 实际时长比整集短出容差(1%, 至少3秒)即视为试看片段; 无法判定(null/整集时长缺失)一律返回 false 保守放行
+    internal static bool IsDurationShorterThanEpisode(double? actualSeconds, int totalSeconds)
+    {
+        if (actualSeconds is not { } actual || totalSeconds <= 0) return false;
+        var tolerance = Math.Max(3, totalSeconds * 0.01);
+        return actual < totalSeconds - tolerance;
+    }
+
+    /// <summary>
+    /// 已存在的输出文件可能是旧版本留下的试看片段: 时长不足整集时不能当作已下载缓存跳过。
+    /// 返回 null 表示按正常流程继续(试看文件将被重新下载覆盖); MetadataOnly 无法修复试看文件, 返回 Failed。
+    /// </summary>
+    internal static DownloadPageOutcome? HandlePreviewExistingOutput(
+        ParsedResult parsedResult, MyOption myOption, string savePath, Func<string[], string?>? readProbe = null)
+    {
+        if (parsedResult.TotalDurationSeconds <= 0) return null;
+        var actual = MediaProbe.DurationSeconds(savePath, readProbe);
+        if (actual is null || !IsDurationShorterThanEpisode(actual, parsedResult.TotalDurationSeconds)) return null;
+        if (myOption.MetadataOnly)
+        {
+            LogError($"{savePath} 是试看片段(时长 {actual.Value:F0}s, 整集 {parsedResult.TotalDurationSeconds:F0}s), --metadata-only 无法修复, 请去掉该参数重新下载");
+            return DownloadPageOutcome.Failed;
+        }
+        LogWarn($"{savePath} 是试看片段(时长 {actual.Value:F0}s, 整集 {parsedResult.TotalDurationSeconds:F0}s), 将重新下载完整版本...");
+        return null;
     }
 
     internal static bool IsUsableArtifact(string path)
